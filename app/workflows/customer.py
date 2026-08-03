@@ -197,7 +197,9 @@ async def handle_inbound_message(
 
     direct_reply = _direct_greeting_reply(business, message_text, stage, pending)
     if direct_reply is None:
-        direct_reply = await _direct_payment_status_reply(session, business, customer, message_text)
+        direct_reply = await _direct_payment_status_reply(
+            session, business, customer, message_text, mpesa_callback_secret=mpesa_callback_secret
+        )
 
     if direct_reply is None:
         direct_reply = await _direct_pending_booking_reference_reply(session, business, customer, message_text)
@@ -268,12 +270,17 @@ def _direct_greeting_reply(
 
 
 async def _direct_payment_status_reply(
-    session: AsyncSession, business: Business, customer, message_text: str
+    session: AsyncSession, business: Business, customer, message_text: str, mpesa_callback_secret: str = ""
 ) -> str | None:
     lowered = message_text.lower()
-    if not _PAYMENT_STATUS_RE.search(message_text):
+    is_status_query = bool(_PAYMENT_STATUS_RE.search(message_text))
+    wants_resend = any(
+        phrase in lowered
+        for phrase in ("resend", "send again", "prompt again", "retry", "didnt get", "didn't get", "another prompt", "new prompt")
+    )
+    if not is_status_query and not wants_resend:
         return None
-    if not any(word in lowered for word in ("paid", "payment", "deposit", "mpesa", "m-pesa", "stk")):
+    if not any(word in lowered for word in ("paid", "payment", "deposit", "mpesa", "m-pesa", "stk", "resend", "prompt", "retry", "again")):
         return None
 
     bookings = await repo.list_upcoming_bookings_for_customer(session, business.id, customer.id)
@@ -282,19 +289,44 @@ async def _direct_payment_status_reply(
         booking = pending_bookings[0]
         service = await repo.get_service_for_business(session, business.id, booking.service_id)
         service_name = service.name if service else "your booking"
+
+        if wants_resend and mpesa_callback_secret and business.mpesa_shortcode:
+            payment = await payments.initiate_deposit(
+                session, business, customer.phone, float(booking.deposit_amount), mpesa_callback_secret
+            )
+            booking.payment_id = payment.id
+            await session.flush()
+            return (
+                f"I've sent a new M-Pesa prompt for KES {_fmt_price(booking.deposit_amount)} ({service_name}). "
+                "Please check your phone and enter your PIN to confirm!"
+            )
+
         return (
             f"Thanks - I can see your {service_name} on {booking.slot_start:%d %b at %H:%M} "
             "is still waiting for the M-Pesa confirmation. Once it comes through, "
-            "I'll update you here automatically."
+            "I'll update you here automatically. (Reply 'RESEND' if you need a new prompt)."
         )
 
     orders = await repo.list_upcoming_orders_for_customer(session, business.id, customer.id)
     pending_orders = [o for o in orders if o.status == OrderStatus.PENDING_DEPOSIT]
     if pending_orders:
         summary = await _order_summary_text(session, business, pending_orders[0])
+        order = pending_orders[0]
+
+        if wants_resend and mpesa_callback_secret and business.mpesa_shortcode:
+            payment = await payments.initiate_deposit(
+                session, business, customer.phone, float(order.deposit_amount), mpesa_callback_secret
+            )
+            order.payment_id = payment.id
+            await session.flush()
+            return (
+                f"I've sent a new M-Pesa prompt for KES {_fmt_price(order.deposit_amount)} ({summary}). "
+                "Please check your phone and enter your PIN to confirm!"
+            )
+
         return (
             f"Thanks - I can see your order ({summary}) is still waiting for the "
-            "M-Pesa confirmation. Once it comes through, I'll update you here automatically."
+            "M-Pesa confirmation. Once it comes through, I'll update you here automatically. (Reply 'RESEND' if you need a new prompt)."
         )
 
     return (
