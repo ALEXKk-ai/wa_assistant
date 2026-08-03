@@ -958,7 +958,7 @@ def _validate_slot(business: Business, slot_start: datetime, slot_end: datetime)
 
 
 async def _advance_booking(session: AsyncSession, business: Business, pending: dict, entities: dict):
-    pending = _merge_entities(pending, entities, ["service_name", "date_text", "time_text"])
+    pending = _merge_entities(pending, entities, ["service_name", "date_text", "time_text", "payment_phone"])
     pending["type"] = "booking"
 
     services = await repo.list_services(session, business.id)
@@ -1047,7 +1047,7 @@ async def _advance_booking(session: AsyncSession, business: Business, pending: d
 
 
 async def _advance_order(session: AsyncSession, business: Business, pending: dict, entities: dict):
-    pending = _merge_entities(pending, entities, ["product_name", "quantity", "fulfillment_type", "delivery_address"])
+    pending = _merge_entities(pending, entities, ["product_name", "quantity", "fulfillment_type", "delivery_address", "payment_phone"])
     pending["type"] = "order"
 
     products = await repo.list_products(session, business.id)
@@ -1420,13 +1420,16 @@ async def _finalize_booking(session, business, customer, customer_phone, pending
             f"is confirmed. Payment of KES {_fmt_price(service.price)} will be collected upon arrival."
         )
 
-    payment = await payments.initiate_deposit(session, business, customer_phone, deposit_amount, mpesa_callback_secret)
+    payment = await payments.initiate_deposit(
+        session, business, customer_phone, deposit_amount, mpesa_callback_secret, payment_phone=pending.get("payment_phone")
+    )
     booking.payment_id = payment.id
     await session.flush()
 
+    target_msg = f" (sent to {pending.get('payment_phone')})" if pending.get("payment_phone") else ""
     return (
         f"Booked {service.name} on {slot_start:%d %b %Y at %H:%M}, pending a KES "
-        f"{_fmt_price(deposit_amount)} deposit. Check your phone for the M-Pesa prompt to confirm."
+        f"{_fmt_price(deposit_amount)} deposit. Check your phone{target_msg} for the M-Pesa prompt to confirm."
     )
 
 
@@ -1515,13 +1518,16 @@ async def _finalize_order(session, business, customer, customer_phone, pending, 
             f"Your items will be prepared. Payment will be collected upon delivery/pickup."
         )
 
-    payment = await payments.initiate_deposit(session, business, customer_phone, deposit_amount, mpesa_callback_secret)
+    payment = await payments.initiate_deposit(
+        session, business, customer_phone, deposit_amount, mpesa_callback_secret, payment_phone=pending.get("payment_phone")
+    )
     order.payment_id = payment.id
     await session.flush()
 
+    target_msg = f" (sent to {pending.get('payment_phone')})" if pending.get("payment_phone") else ""
     return (
         f"Order placed: {quantity} x {product.name} (KES {_fmt_price(total)} total), pending a KES "
-        f"{_fmt_price(deposit_amount)} deposit. Check your phone for the M-Pesa prompt to confirm."
+        f"{_fmt_price(deposit_amount)} deposit. Check your phone{target_msg} for the M-Pesa prompt to confirm."
     )
 
 

@@ -106,7 +106,7 @@ async def test_confirming_after_slot_filled_creates_booking(session, business, m
 
     initiate_calls = []
 
-    async def _fake_initiate_deposit(session_, business_, phone, amount, secret):
+    async def _fake_initiate_deposit(session_, business_, phone, amount, secret, payment_phone=None):
         initiate_calls.append((phone, amount))
 
         class _FakePayment:
@@ -214,3 +214,44 @@ async def test_cancel_clears_pending_state(session, business, monkeypatch, sent_
     state = json.loads(state_row.state_json)
     assert state["stage"] == customer_mod.STAGE_IDLE
     assert state["pending"] == {}
+
+
+async def test_custom_payment_phone_stk_push(session, business, monkeypatch, sent_messages):
+    await _add_haircut(session, business)
+    business.mpesa_shortcode = "174379"
+
+    stk_calls = []
+
+    async def _fake_initiate_deposit(session_, business_, phone, amount, secret, payment_phone=None):
+        stk_calls.append((phone, payment_phone, amount))
+
+        class _FakePayment:
+            id = 888
+
+        return _FakePayment()
+
+    monkeypatch.setattr(customer_mod.payments, "initiate_deposit", _fake_initiate_deposit)
+
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(
+                type=ai.IntentType.BOOK_SERVICE,
+                entities={
+                    "service_name": "Haircut",
+                    "date_text": "18 August 2026",
+                    "time_text": "14:00",
+                    "payment_phone": "0712345678",
+                },
+            ),
+            ai.Intent(type=ai.IntentType.CONFIRM_ACTION, entities={}),
+        ],
+    )
+
+    phone = "254711119999"
+    await customer_mod.handle_inbound_message(session, business, phone, "haircut 18 Aug 2pm pay via 0712345678", "cb-secret")
+    reply = await customer_mod.handle_inbound_message(session, business, phone, "yes", "cb-secret")
+
+    assert "0712345678" in reply
+    assert len(stk_calls) == 1
+    assert stk_calls[0][1] == "0712345678"

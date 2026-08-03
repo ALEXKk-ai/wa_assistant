@@ -73,6 +73,7 @@ async def initiate_deposit(
     customer_phone: str,
     amount: float,
     callback_path_secret: str,
+    payment_phone: str | None = None,
 ) -> Payment:
     """Creates a pending Payment row, then requests an STK Push. Returns the
     Payment row regardless of whether the STK request itself succeeds - a
@@ -81,6 +82,11 @@ async def initiate_deposit(
     silently vanishing."""
     idempotency_key = uuid.uuid4().hex
     payment = await repo.create_payment(session, business.id, idempotency_key, amount)
+
+    target_phone = payment_phone or customer_phone
+    target_phone = "".join(c for c in str(target_phone) if c.isdigit())
+    if target_phone.startswith("0"):
+        target_phone = "254" + target_phone[1:]
 
     settings = get_settings()
     try:
@@ -104,9 +110,9 @@ async def initiate_deposit(
                     "Timestamp": timestamp,
                     "TransactionType": "CustomerPayBillOnline",
                     "Amount": int(amount),
-                    "PartyA": customer_phone,
+                    "PartyA": target_phone,
                     "PartyB": shortcode,
-                    "PhoneNumber": customer_phone,
+                    "PhoneNumber": target_phone,
                     "CallBackURL": callback_url,
                     "AccountReference": f"DEP-{payment.id}",
                     "TransactionDesc": "Deposit",

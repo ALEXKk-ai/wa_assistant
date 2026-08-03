@@ -73,7 +73,7 @@ Given the business's catalog, operating hours, recent conversation history, and 
 in progress, analyze the customer's message and respond ONLY with JSON matching this schema, no markdown:
 
 {{"type": "ASK_INFO|LIST_SERVICES|LIST_PRODUCTS|BOOK_SERVICE|BUY_PRODUCT|CHECK_STATUS|CANCEL_BOOKING|CANCEL_ORDER|RESCHEDULE_BOOKING|CONFIRM_ACTION|CANCEL_ACTION|OUT_OF_SCOPE|OFF_TOPIC", \
-"entities": {{"service_name": null, "product_name": null, "quantity": null, "date_text": null, "time_text": null, "fulfillment_type": null, "delivery_address": null}}, \
+"entities": {{"service_name": null, "product_name": null, "quantity": null, "date_text": null, "time_text": null, "fulfillment_type": null, "delivery_address": null, "payment_phone": null}}, \
 "reply_text": "<natural, friendly reply to send the customer, used for ASK_INFO, LIST_SERVICES, LIST_PRODUCTS, CHECK_STATUS, OFF_TOPIC, and general chat>"}}
 
 Rules for classification:
@@ -83,6 +83,7 @@ Rules for classification:
 - date_text: ONLY the date/day part mentioned in THIS message (e.g. "Thursday", "tomorrow", "25th August"). Do not repeat dates from earlier turns.
 - time_text: ONLY the time-of-day part mentioned in THIS message (e.g. "2pm", "14:00"). Do not repeat times from earlier.
 - quantity: a plain integer if THIS message states a quantity, else null.
+- payment_phone: phone number if customer provides an M-Pesa payment line in THIS message (e.g. "0712345678", "pay via 0711223344"), else null.
 - CANCEL_BOOKING / CANCEL_ORDER: Customer wants to cancel an existing, already-made booking/order.
 - RESCHEDULE_BOOKING: Customer wants to move an existing booking to a new time.
 - CONFIRM_ACTION: Customer agrees to proceed with an in-progress action ("yes", "confirm", "go ahead").
