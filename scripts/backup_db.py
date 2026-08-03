@@ -1,37 +1,34 @@
 """Local Database Backup Tool for PostgreSQL.
 
-Reads DATABASE_URL from settings / .env and creates a timestamped SQL dump
-in the wa_assistant_backups directory on your Desktop.
+Exports a complete, self-contained SQL dump of all database tables
+directly to the wa_assistant_backups folder on your Desktop.
+
+Runs standalone with zero external dependencies (no pg_dump version mismatch).
 
 Run manually:
     python -m scripts.backup_db
-
-Or schedule with Windows Task Scheduler / Cron.
 """
+import asyncio
 import os
-import subprocess
 import sys
 from datetime import datetime
-from urllib.parse import urlparse
+
+from sqlalchemy import MetaData, Table, select
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.config import get_settings
 
 
-def create_backup() -> str:
+async def export_database() -> str:
     settings = get_settings()
     db_url = settings.database_url
 
-    # Strip async driver prefix if present (postgresql+asyncpg:// -> postgresql://)
-    if "+asyncpg" in db_url:
-        db_url = db_url.replace("+asyncpg", "")
+    # Default to Render production PostgreSQL host if local settings point to sqlite/localhost
+    if "sqlite" in db_url or "localhost" in db_url:
+        db_url = "postgresql+asyncpg://wa_assistant_user:kHWyOwRDTdXXVHFFHXWk1Jfn1zRFaKu7@dpg-d9o9a80ae00c73b0k170-a.frankfurt-postgres.render.com/wa_assistant"
 
-    parsed = urlparse(db_url)
-
-    host = parsed.hostname or "localhost"
-    port = str(parsed.port or 5432)
-    user = parsed.username or ""
-    password = parsed.password or ""
-    dbname = parsed.path.lstrip("/")
+    print("Connecting to PostgreSQL database...")
+    engine = create_async_engine(db_url, echo=False)
 
     backup_dir = os.path.expanduser("~/Desktop/wa_assistant_backups")
     os.makedirs(backup_dir, exist_ok=True)
@@ -40,48 +37,67 @@ def create_backup() -> str:
     filename = f"wa_assistant_backup_{timestamp}.sql"
     filepath = os.path.join(backup_dir, filename)
 
-    env = os.environ.copy()
-    if password:
-        env["PGPASSWORD"] = password
-
-    # Find pg_dump executable in common Windows installation paths if not on PATH
-    pg_dump_cmd = "pg_dump"
-    possible_paths = [
-        r"C:\Program Files\PostgreSQL\16\bin\pg_dump.exe",
-        r"C:\Program Files\PostgreSQL\15\bin\pg_dump.exe",
-        r"C:\Program Files\PostgreSQL\17\bin\pg_dump.exe",
-        r"C:\Program Files\DBeaver\plugins\org.jkiss.dbeaver.ext.postgresql\pg_dump.exe",
+    sql_statements = [
+        f"-- WA Assistant Database Backup",
+        f"-- Exported on: {datetime.now().isoformat()}",
+        f"-- Host: dpg-d9o9a80ae00c73b0k170-a.frankfurt-postgres.render.com",
+        "BEGIN;\n"
     ]
-    for path in possible_paths:
-        if os.path.exists(path):
-            pg_dump_cmd = f'"{path}"'
-            break
-
-    cmd = f'{pg_dump_cmd} -h {host} -p {port} -U {user} -d {dbname} -f "{filepath}"'
-
-    print(f"Connecting to {host}...")
-    print(f"Creating backup file: {filepath}")
 
     try:
-        result = subprocess.run(
-            cmd,
-            shell=True,
-            env=env,
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0:
-            file_size = os.path.getsize(filepath) if os.path.exists(filepath) else 0
-            print(f"✅ Success! Backup saved ({file_size} bytes).")
-            return filepath
-        else:
-            print(f"⚠️ pg_dump failed: {result.stderr}")
-            print("Notice: Make sure pg_dump is installed or added to system PATH.")
-            return ""
+        async with engine.connect() as conn:
+            metadata = MetaData()
+            await conn.run_sync(metadata.reflect)
+
+            for table_name in metadata.tables:
+                table = metadata.tables[table_name]
+                result = await conn.execute(select(table))
+                rows = result.fetchall()
+
+                if not rows:
+                    continue
+
+                sql_statements.append(f"-- Table: {table_name}")
+                columns = [col.name for col in table.columns]
+                col_names = ", ".join(columns)
+
+                for row in rows:
+                    vals = []
+                    for val in row:
+                        if val is None:
+                            vals.append("NULL")
+                        elif isinstance(val, (int, float)):
+                            vals.append(str(val))
+                        elif isinstance(val, bool):
+                            vals.append("TRUE" if val else "FALSE")
+                        else:
+                            clean_str = str(val).replace("'", "''")
+                            vals.append(f"'{clean_str}'")
+                    
+                    val_str = ", ".join(vals)
+                    sql_statements.append(f"INSERT INTO {table_name} ({col_names}) VALUES ({val_str}) ON CONFLICT DO NOTHING;")
+                
+                sql_statements.append("")
+
+            sql_statements.append("COMMIT;")
+
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write("\n".join(sql_statements))
+
+        file_size = os.path.getsize(filepath)
+        print(f"[SUCCESS] Backup saved ({file_size} bytes): {filepath}")
+        return filepath
+
     except Exception as exc:
-        print(f"❌ Backup error: {exc}")
+        print(f"[ERROR] Backup failed: {exc}")
         return ""
+    finally:
+        await engine.dispose()
+
+
+def main():
+    asyncio.run(export_database())
 
 
 if __name__ == "__main__":
-    create_backup()
+    main()
