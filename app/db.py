@@ -47,9 +47,9 @@ def _migrate_schema(connection) -> None:
     if "bookings" in tables:
         columns = {col["name"] for col in inspector.get_columns("bookings")}
         if "proposed_slot_start" not in columns:
-            connection.execute(sa.text("ALTER TABLE bookings ADD COLUMN proposed_slot_start DATETIME"))
+            connection.execute(sa.text("ALTER TABLE bookings ADD COLUMN proposed_slot_start TIMESTAMP"))
         if "proposed_slot_end" not in columns:
-            connection.execute(sa.text("ALTER TABLE bookings ADD COLUMN proposed_slot_end DATETIME"))
+            connection.execute(sa.text("ALTER TABLE bookings ADD COLUMN proposed_slot_end TIMESTAMP"))
 
     if "businesses" in tables:
         biz_columns = {col["name"] for col in inspector.get_columns("businesses")}
