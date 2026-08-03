@@ -751,8 +751,11 @@ async def _dispatch(
             return "Rescheduling isn't available for orders - please contact us directly.", STAGE_IDLE, {}
         return await _start_reschedule_booking(session, business, customer)
 
-    if intent.type == ai.IntentType.CONFIRM_ACTION:
+    digits_in_msg = "".join(c for c in message_text if c.isdigit())
+    if intent.type == ai.IntentType.CONFIRM_ACTION or (stage == STAGE_CONFIRMING and len(digits_in_msg) >= 9):
         if stage == STAGE_CONFIRMING and pending:
+            if len(digits_in_msg) >= 9:
+                pending["payment_phone"] = digits_in_msg
             reply = await _finalize_pending_action(
                 session, business, customer, customer_phone, pending, mpesa_callback_secret
             )
@@ -1034,7 +1037,8 @@ async def _advance_booking(session: AsyncSession, business: Business, pending: d
     deposit_amount = payments.compute_deposit_amount(business, float(service.price), item=service)
     pending["slot_start_iso"] = slot_start.isoformat()
     if deposit_amount > 0 and business.mpesa_shortcode:
-        deposit_text = f", KES {_fmt_price(deposit_amount)} deposit.\nReply YES to confirm and I'll send the M-Pesa prompt"
+        phone_hint = f" to {pending['payment_phone']}" if pending.get("payment_phone") else ""
+        deposit_text = f", KES {_fmt_price(deposit_amount)} deposit.\nReply YES to send the M-Pesa prompt{phone_hint}, or reply with a different M-Pesa number (e.g. 0712345678)"
     else:
         deposit_text = ".\nNo upfront deposit required — payment will be collected upon arrival. Reply YES to confirm"
 
@@ -1116,7 +1120,8 @@ async def _advance_order(session: AsyncSession, business: Business, pending: dic
     total = float(product.price) * quantity
     deposit_amount = payments.compute_deposit_amount(business, total, item=product)
     if deposit_amount > 0 and business.mpesa_shortcode:
-        deposit_text = f", KES {_fmt_price(deposit_amount)} deposit.\nReply YES to confirm and I'll send the M-Pesa prompt"
+        phone_hint = f" to {pending['payment_phone']}" if pending.get("payment_phone") else ""
+        deposit_text = f", KES {_fmt_price(deposit_amount)} deposit.\nReply YES to send the M-Pesa prompt{phone_hint}, or reply with a different M-Pesa number (e.g. 0712345678)"
     else:
         deposit_text = ".\nNo upfront deposit required — payment will be collected upon delivery/pickup. Reply YES to confirm"
 
