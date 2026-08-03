@@ -203,41 +203,43 @@ async def handle_inbound_message(
 
     if direct_reply is None:
         direct_reply = await _direct_pending_booking_reference_reply(session, business, customer, message_text)
-        if direct_reply is None:
-            direct_reply = await _direct_catalog_availability_reply(session, business, message_text)
-        if direct_reply is not None:
-            reply_text, new_stage, new_pending = direct_reply, stage, pending
+    if direct_reply is None:
+        direct_reply = await _direct_catalog_availability_reply(session, business, message_text)
+
+    if direct_reply is not None:
+        if isinstance(direct_reply, tuple):
+            reply_text, new_stage, new_pending = direct_reply
         else:
-            intent = _deterministic_intent(message_text, stage, pending, business)
-            if intent is None:
-                catalog = await _build_catalog_summary(session, business)
-                hours = json.loads(business.hours_json or "{}")
-                intent = await ai.extract_intent(
-                    customer_message=message_text,
-                    business_name=business.name,
-                    business_type=business.business_type.value,
-                    catalog=catalog,
-                    conversation_history=history[:-1],
-                    pending=pending,
-                    business_hours_text=hours_mod.format_hours(hours),
-                    business_address=business.address_text or "not listed",
-                    business_extra_info=business.extra_info_text or "none",
-                    fulfillment_policy=getattr(business.fulfillment_mode, "value", "both"),
-                )
-            else:
-                logger.info(
-                    "Intent classified deterministically",
-                    extra=log_extra(business_id=business.id, intent=intent.type.value, stage=stage),
-                )
+            reply_text, new_stage, new_pending = direct_reply, stage, pending
+    else:
+        intent = _deterministic_intent(message_text, stage, pending, business)
+        if intent is None:
+            catalog = await _build_catalog_summary(session, business)
+            hours = json.loads(business.hours_json or "{}")
+            intent = await ai.extract_intent(
+                customer_message=message_text,
+                business_name=business.name,
+                business_type=business.business_type.value,
+                catalog=catalog,
+                conversation_history=history[:-1],
+                pending=pending,
+                business_hours_text=hours_mod.format_hours(hours),
+                business_address=business.address_text or "not listed",
+                business_extra_info=business.extra_info_text or "none",
+                fulfillment_policy=getattr(business.fulfillment_mode, "value", "both"),
+            )
+        else:
             logger.info(
-                "Intent classified",
+                "Intent classified deterministically",
                 extra=log_extra(business_id=business.id, intent=intent.type.value, stage=stage),
             )
-            reply_text, new_stage, new_pending = await _dispatch(
-                session, business, customer, customer_phone, message_text, intent, stage, pending, mpesa_callback_secret
-            )
-    else:
-        reply_text, new_stage, new_pending = direct_reply, stage, pending
+        logger.info(
+            "Intent classified",
+            extra=log_extra(business_id=business.id, intent=intent.type.value, stage=stage),
+        )
+        reply_text, new_stage, new_pending = await _dispatch(
+            session, business, customer, customer_phone, message_text, intent, stage, pending, mpesa_callback_secret
+        )
 
     history.append({"role": "bot", "text": reply_text})
     history = history[-MAX_HISTORY_ENTRIES:]
@@ -271,7 +273,7 @@ def _direct_greeting_reply(
 
 async def _direct_payment_status_reply(
     session: AsyncSession, business: Business, customer, message_text: str, mpesa_callback_secret: str = ""
-) -> str | None:
+) -> str | tuple[str, str, dict] | None:
     lowered = message_text.lower()
     is_status_query = bool(_PAYMENT_STATUS_RE.search(message_text))
     wants_resend = any(
@@ -283,6 +285,9 @@ async def _direct_payment_status_reply(
     if not any(word in lowered for word in ("paid", "payment", "deposit", "mpesa", "m-pesa", "stk", "resend", "prompt", "retry", "again")):
         return None
 
+    digits = "".join(c for c in message_text if c.isdigit())
+    custom_phone = digits if len(digits) >= 9 else None
+
     bookings = await repo.list_upcoming_bookings_for_customer(session, business.id, customer.id)
     pending_bookings = [b for b in bookings if b.status == BookingStatus.PENDING_DEPOSIT]
     if pending_bookings:
@@ -290,16 +295,20 @@ async def _direct_payment_status_reply(
         service = await repo.get_service_for_business(session, business.id, booking.service_id)
         service_name = service.name if service else "your booking"
 
-        if wants_resend and mpesa_callback_secret and business.mpesa_shortcode:
-            payment = await payments.initiate_deposit(
-                session, business, customer.phone, float(booking.deposit_amount), mpesa_callback_secret
+        if wants_resend:
+            target = custom_phone or customer.phone_number
+            resend_pending = {
+                "type": "resend_deposit",
+                "booking_id": booking.id,
+                "deposit_amount": float(booking.deposit_amount),
+                "item_name": service_name,
+                "payment_phone": custom_phone,
+            }
+            reply = (
+                f"Sure! Would you like me to send the M-Pesa prompt for KES {_fmt_price(booking.deposit_amount)} ({service_name}) to {target}?\n"
+                f"Reply YES to proceed, or reply with a different M-Pesa number (e.g. 0712345678)."
             )
-            booking.payment_id = payment.id
-            await session.flush()
-            return (
-                f"I've sent a new M-Pesa prompt for KES {_fmt_price(booking.deposit_amount)} ({service_name}). "
-                "Please check your phone and enter your PIN to confirm!"
-            )
+            return reply, STAGE_CONFIRMING, resend_pending
 
         return (
             f"Thanks - I can see your {service_name} on {booking.slot_start:%d %b at %H:%M} "
@@ -313,16 +322,20 @@ async def _direct_payment_status_reply(
         summary = await _order_summary_text(session, business, pending_orders[0])
         order = pending_orders[0]
 
-        if wants_resend and mpesa_callback_secret and business.mpesa_shortcode:
-            payment = await payments.initiate_deposit(
-                session, business, customer.phone, float(order.deposit_amount), mpesa_callback_secret
+        if wants_resend:
+            target = custom_phone or customer.phone_number
+            resend_pending = {
+                "type": "resend_deposit",
+                "order_id": order.id,
+                "deposit_amount": float(order.deposit_amount),
+                "item_name": summary,
+                "payment_phone": custom_phone,
+            }
+            reply = (
+                f"Sure! Would you like me to send the M-Pesa prompt for KES {_fmt_price(order.deposit_amount)} ({summary}) to {target}?\n"
+                f"Reply YES to proceed, or reply with a different M-Pesa number (e.g. 0712345678)."
             )
-            order.payment_id = payment.id
-            await session.flush()
-            return (
-                f"I've sent a new M-Pesa prompt for KES {_fmt_price(order.deposit_amount)} ({summary}). "
-                "Please check your phone and enter your PIN to confirm!"
-            )
+            return reply, STAGE_CONFIRMING, resend_pending
 
         return (
             f"Thanks - I can see your order ({summary}) is still waiting for the "
@@ -1396,7 +1409,37 @@ async def _finalize_pending_action(
         return await _finalize_reschedule_booking(session, business, customer_phone, pending)
     if ptype == "booking_time_retry":
         return await _finalize_booking_time_retry(session, business, customer_phone, pending)
+    if ptype == "resend_deposit":
+        return await _finalize_resend_deposit(session, business, customer, customer_phone, pending, mpesa_callback_secret)
     return "Sorry, I lost track of what we were confirming - could you start again?"
+
+
+async def _finalize_resend_deposit(
+    session: AsyncSession, business: Business, customer, customer_phone: str, pending: dict, mpesa_callback_secret: str
+) -> str:
+    target_phone = pending.get("payment_phone") or customer_phone
+    amount = float(pending.get("deposit_amount", 0))
+    item_name = pending.get("item_name", "your request")
+
+    payment = await payments.initiate_deposit(
+        session, business, customer_phone, amount, mpesa_callback_secret, payment_phone=target_phone
+    )
+    if pending.get("booking_id"):
+        booking = await repo.get_booking_for_business(session, business.id, pending["booking_id"])
+        if booking:
+            booking.payment_id = payment.id
+            await session.flush()
+    elif pending.get("order_id"):
+        order = await repo.get_order_for_business(session, business.id, pending["order_id"])
+        if order:
+            order.payment_id = payment.id
+            await session.flush()
+
+    target_msg = f" (sent to {target_phone})" if target_phone != customer_phone else ""
+    return (
+        f"I've sent a new M-Pesa prompt for KES {_fmt_price(amount)} ({item_name}). "
+        f"Check your phone{target_msg} and enter your PIN to confirm!"
+    )
 
 
 async def _finalize_booking(session, business, customer, customer_phone, pending, mpesa_callback_secret) -> str:

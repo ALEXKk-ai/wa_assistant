@@ -255,3 +255,47 @@ async def test_custom_payment_phone_stk_push(session, business, monkeypatch, sen
     assert "0712345678" in reply
     assert len(stk_calls) == 1
     assert stk_calls[0][1] == "0712345678"
+
+
+async def test_resend_prompt_asks_confirmation(session, business, monkeypatch):
+    await _add_haircut(session, business)
+    business.mpesa_shortcode = "174379"
+
+    stk_calls = []
+
+    async def _fake_initiate_deposit(session_, business_, phone, amount, secret, payment_phone=None):
+        stk_calls.append((phone, payment_phone, amount))
+
+        class _FakePayment:
+            id = 777
+
+        return _FakePayment()
+
+    monkeypatch.setattr(customer_mod.payments, "initiate_deposit", _fake_initiate_deposit)
+
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(
+                type=ai.IntentType.BOOK_SERVICE,
+                entities={"service_name": "Haircut", "date_text": "18 August 2026", "time_text": "14:00"},
+            ),
+            ai.Intent(type=ai.IntentType.CONFIRM_ACTION, entities={}),
+            ai.Intent(type=ai.IntentType.CONFIRM_ACTION, entities={}),
+        ],
+    )
+
+    phone = "254722000111"
+    await customer_mod.handle_inbound_message(session, business, phone, "haircut 18 Aug 2pm", "cb-secret")
+    await customer_mod.handle_inbound_message(session, business, phone, "yes", "cb-secret")
+    assert len(stk_calls) == 1
+
+    # Customer asks for resend
+    reply1 = await customer_mod.handle_inbound_message(session, business, phone, "resend prompt", "cb-secret")
+    assert "Would you like me to send" in reply1
+    assert "254722000111" in reply1
+
+    # Customer confirms YES
+    reply2 = await customer_mod.handle_inbound_message(session, business, phone, "yes", "cb-secret")
+    assert "sent a new M-Pesa prompt" in reply2
+    assert len(stk_calls) == 2
