@@ -1,0 +1,93 @@
+"""Create demo service + goods shops for local testing.
+
+Run:
+    python -m scripts.seed_demo_shops
+"""
+import asyncio
+import json
+
+from sqlalchemy import select
+
+from app import hours as hours_mod
+from app.db import get_session, init_db
+from app.models import Business, BusinessType, ConfirmationMode, Product, Service
+from app.security import encrypt_secret
+
+SERVICES_PHONE_ID = "demo-services-shop"
+GOODS_PHONE_ID = "demo-goods-shop"
+DEV_TOKEN = "dev-whatsapp-token-not-for-production"
+
+
+async def seed() -> None:
+    await init_db()
+    hours = hours_mod.parse_hours_spec("Mon-Sat 09:00-18:00")
+
+    async with get_session() as session:
+        existing = {
+            b.whatsapp_phone_number_id: b
+            for b in (await session.execute(select(Business))).scalars().all()
+        }
+
+        if SERVICES_PHONE_ID not in existing:
+            salon = Business(
+                name="Luna Hair Studio",
+                business_type=BusinessType.SERVICES,
+                whatsapp_phone_number_id=SERVICES_PHONE_ID,
+                whatsapp_token_encrypted=encrypt_secret(DEV_TOKEN),
+                owner_whatsapp_number="254700100001",
+                mpesa_shortcode="174379",
+                mpesa_passkey_encrypted=encrypt_secret("dev-passkey"),
+                mpesa_consumer_key_encrypted=encrypt_secret("dev-key"),
+                mpesa_consumer_secret_encrypted=encrypt_secret("dev-secret"),
+                deposit_percentage=20,
+                confirmation_mode=ConfirmationMode.MANUAL,
+                hours_json=json.dumps(hours),
+                timezone="Africa/Nairobi",
+            )
+            session.add(salon)
+            await session.flush()
+            session.add_all(
+                [
+                    Service(business_id=salon.id, name="Haircut", price=800, duration_minutes=45),
+                    Service(business_id=salon.id, name="Manicure", price=600, duration_minutes=30),
+                    Service(business_id=salon.id, name="Braiding", price=2500, duration_minutes=120),
+                ]
+            )
+            print(f"Created services shop id={salon.id} ({salon.name})")
+        else:
+            print(f"Services shop already exists id={existing[SERVICES_PHONE_ID].id}")
+
+        if GOODS_PHONE_ID not in existing:
+            boutique = Business(
+                name="Nairobi Style Boutique",
+                business_type=BusinessType.GOODS,
+                whatsapp_phone_number_id=GOODS_PHONE_ID,
+                whatsapp_token_encrypted=encrypt_secret(DEV_TOKEN),
+                owner_whatsapp_number="254700100002",
+                mpesa_shortcode="174379",
+                mpesa_passkey_encrypted=encrypt_secret("dev-passkey"),
+                mpesa_consumer_key_encrypted=encrypt_secret("dev-key"),
+                mpesa_consumer_secret_encrypted=encrypt_secret("dev-secret"),
+                deposit_percentage=20,
+                confirmation_mode=ConfirmationMode.AUTOMATIC,
+                hours_json=json.dumps(hours),
+                timezone="Africa/Nairobi",
+            )
+            session.add(boutique)
+            await session.flush()
+            session.add_all(
+                [
+                    Product(business_id=boutique.id, name="Blue Dress (M)", price=2500, stock_qty=8),
+                    Product(business_id=boutique.id, name="Leather Handbag", price=4500, stock_qty=5),
+                    Product(business_id=boutique.id, name="Sneakers (42)", price=3200, stock_qty=12),
+                ]
+            )
+            print(f"Created goods shop id={boutique.id} ({boutique.name})")
+        else:
+            print(f"Goods shop already exists id={existing[GOODS_PHONE_ID].id}")
+
+    print("\nShops ready. Run: python -m scripts.simulate_customer")
+
+
+if __name__ == "__main__":
+    asyncio.run(seed())

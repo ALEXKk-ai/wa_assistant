@@ -1,0 +1,213 @@
+"""LLM-based intent extraction.
+
+Two things changed from the original version to support non-linear,
+multi-turn conversations:
+
+1. extract_intent() now takes conversation_history and pending - the LLM
+   sees what's already been collected (e.g. "service=Haircut, slot_text=
+   'Thursday'") and the last few turns, so it can both (a) merge new
+   information into what's already known instead of ignoring it, and
+   (b) correctly interpret a short reply like "2pm" as filling in the
+   missing time for an in-progress booking, rather than misclassifying it.
+
+2. A genuine OUT_OF_SCOPE intent exists now, separate from FALLBACK.
+   FALLBACK is a code-level safety net for technical failures (timeout,
+   malformed JSON) and is never something the LLM is asked to choose.
+   OUT_OF_SCOPE is a real classification the LLM makes when the message
+   is something the catalog/business info can't ground an answer to (a
+   partnership proposal, a complaint needing a human judgment call, a
+   custom price negotiation) - the bot should not improvise an answer to
+   these from general knowledge, it should say so and forward it.
+
+The one rule this module still enforces: a slow or broken LLM must never
+crash or silently stall a conversation - every call is wrapped in a
+timeout + bounded retry, and any failure degrades to FALLBACK_INTENT.
+"""
+import json
+from dataclasses import dataclass, field
+from enum import Enum
+
+import httpx
+
+from app.config import get_settings
+from app.logging_conf import get_logger, log_extra
+
+logger = get_logger(__name__)
+
+
+class IntentType(str, Enum):
+    ASK_INFO = "ASK_INFO"  # hours, location, general Q&A answerable from the catalog/business info
+    LIST_SERVICES = "LIST_SERVICES"
+    LIST_PRODUCTS = "LIST_PRODUCTS"
+    BOOK_SERVICE = "BOOK_SERVICE"
+    BUY_PRODUCT = "BUY_PRODUCT"
+    CHECK_STATUS = "CHECK_STATUS"
+    CANCEL_BOOKING = "CANCEL_BOOKING"  # customer wants to cancel an existing, already-created booking
+    CANCEL_ORDER = "CANCEL_ORDER"  # same, for an existing order
+    RESCHEDULE_BOOKING = "RESCHEDULE_BOOKING"  # customer wants to move an existing booking to a new time
+    CONFIRM_ACTION = "CONFIRM_ACTION"  # customer is saying yes/go ahead to a pending booking or order
+    CANCEL_ACTION = "CANCEL_ACTION"  # customer wants to abandon what's currently being collected/confirmed
+    OUT_OF_SCOPE = "OUT_OF_SCOPE"  # business inquiry missing from catalog - needs human owner escalation
+    OFF_TOPIC = "OFF_TOPIC"  # completely irrelevant queries (coding, general knowledge, weather) - handled by bot boundary
+    FALLBACK = "FALLBACK"  # LLM call itself failed - code-level only, never an LLM classification
+
+
+@dataclass
+class Intent:
+    type: IntentType
+    entities: dict = field(default_factory=dict)
+    reply_text: str = ""
+
+
+FALLBACK_INTENT = Intent(
+    type=IntentType.FALLBACK,
+    entities={},
+    reply_text=(
+        "Sorry, I didn't quite catch that. Let me get the team to help you "
+        "directly - someone will be with you shortly."
+    ),
+)
+
+_SYSTEM_PROMPT = """You are a helpful, conversational WhatsApp assistant for {business_name}. \
+Given the business's catalog, operating hours, recent conversation history, and what's currently \
+in progress, analyze the customer's message and respond ONLY with JSON matching this schema, no markdown:
+
+{{"type": "ASK_INFO|LIST_SERVICES|LIST_PRODUCTS|BOOK_SERVICE|BUY_PRODUCT|CHECK_STATUS|CANCEL_BOOKING|CANCEL_ORDER|RESCHEDULE_BOOKING|CONFIRM_ACTION|CANCEL_ACTION|OUT_OF_SCOPE|OFF_TOPIC", \
+"entities": {{"service_name": null, "product_name": null, "quantity": null, "date_text": null, "time_text": null, "fulfillment_type": null, "delivery_address": null}}, \
+"reply_text": "<natural, friendly reply to send the customer, used for ASK_INFO, LIST_SERVICES, LIST_PRODUCTS, CHECK_STATUS, OFF_TOPIC, and general chat>"}}
+
+Rules for classification:
+- BOOK_SERVICE / BUY_PRODUCT: Use when the customer mentions wanting a service or product, OR names a specific item listed in the catalog (e.g. "braiding", "haircut"), OR gives a date/time/quantity for an in-progress booking/order. Set service_name or product_name to the catalog item mentioned.
+- fulfillment_type: "delivery" or "pickup" if the customer specifies wanting delivery vs store pickup in THIS message, else null.
+- delivery_address: street address / location / landmark if customer provides a delivery address in THIS message, else null.
+- date_text: ONLY the date/day part mentioned in THIS message (e.g. "Thursday", "tomorrow", "25th August"). Do not repeat dates from earlier turns.
+- time_text: ONLY the time-of-day part mentioned in THIS message (e.g. "2pm", "14:00"). Do not repeat times from earlier.
+- quantity: a plain integer if THIS message states a quantity, else null.
+- CANCEL_BOOKING / CANCEL_ORDER: Customer wants to cancel an existing, already-made booking/order.
+- RESCHEDULE_BOOKING: Customer wants to move an existing booking to a new time.
+- CONFIRM_ACTION: Customer agrees to proceed with an in-progress action ("yes", "confirm", "go ahead").
+- CANCEL_ACTION: Customer wants to abandon an in-progress draft action ("nevermind", "stop").
+- OUT_OF_SCOPE: Use ONLY for business-relevant questions missing from the catalog, hours, address, and extra info (e.g. custom pricing, wholesale, complaints, unlisted services/products). Do NOT guess answers — leave reply_text empty so the human shop owner gets notified!
+- OFF_TOPIC: Use for completely irrelevant, non-business queries (e.g. writing code, weather, recipes, general trivia, random chat). Provide a polite assistant boundary in reply_text (e.g. "I'm the virtual assistant for {business_name}! I can only assist with our listed services, bookings, products, and operating hours..."). Do NOT notify the shop owner for OFF_TOPIC.
+- ASK_INFO / LIST_SERVICES / LIST_PRODUCTS: Answer questions using the catalog, operating hours, address, and extra info provided below. Use reply_text to provide a warm, helpful, natural response to questions about location, parking, policies, hours, prices, or services. If the catalog/hours were already shown in recent history and the customer is acknowledging ("just checking", "thanks", "okay bye"), respond naturally in reply_text without re-listing the whole catalog.
+
+Business name: {business_name}
+Business type: {business_type}
+Fulfillment Policy: {fulfillment_policy}
+Address & Location: {business_address}
+Extra Info & FAQs: {business_extra_info}
+Catalog: {catalog}
+Operating hours: {business_hours_text}
+
+Currently collecting: {pending_summary}
+
+Recent conversation:
+{history_text}
+"""
+
+
+def _format_history(conversation_history: list[dict]) -> str:
+    if not conversation_history:
+        return "(none yet)"
+    lines = []
+    for turn in conversation_history[-8:]:
+        role = "Customer" if turn.get("role") == "customer" else "Business"
+        lines.append(f"{role}: {turn.get('text', '')}")
+    return "\n".join(lines)
+
+
+def _format_pending(pending: dict | None) -> str:
+    if not pending:
+        return "(nothing in progress)"
+    parts = [f"{k}={v}" for k, v in pending.items() if v not in (None, "", {})]
+    return ", ".join(parts) if parts else "(nothing in progress)"
+
+
+async def extract_intent(
+    customer_message: str,
+    business_name: str,
+    business_type: str,
+    catalog: list[dict],
+    conversation_history: list[dict] | None = None,
+    pending: dict | None = None,
+    business_hours_text: str = "not set - no restrictions",
+    business_address: str = "not listed",
+    business_extra_info: str = "none",
+    fulfillment_policy: str = "both (delivery or store pickup)",
+) -> Intent:
+    settings = get_settings()
+    prompt = _SYSTEM_PROMPT.format(
+        business_name=business_name,
+        business_type=business_type,
+        fulfillment_policy=fulfillment_policy,
+        business_address=business_address or "not listed",
+        business_extra_info=business_extra_info or "none",
+        catalog=catalog,
+        business_hours_text=business_hours_text,
+        pending_summary=_format_pending(pending),
+        history_text=_format_history(conversation_history or []),
+    )
+
+    last_error: Exception | None = None
+    for attempt in range(settings.llm_max_retries + 1):
+        try:
+            raw = await _call_llm(prompt, customer_message, settings)
+            return _parse_intent(raw)
+        except Exception as exc:  # noqa: BLE001 - deliberately broad, see module docstring
+            last_error = exc
+            logger.warning(
+                "LLM call failed, attempt %s/%s",
+                attempt + 1,
+                settings.llm_max_retries + 1,
+                extra=log_extra(error=str(exc)),
+            )
+
+    logger.error("LLM call exhausted retries, falling back", extra=log_extra(error=str(last_error)))
+    return FALLBACK_INTENT
+
+
+async def _call_llm(system_prompt: str, user_message: str, settings) -> str:
+    async with httpx.AsyncClient(timeout=settings.llm_timeout_seconds) as client:
+        if settings.llm_provider == "gemini":
+            resp = await client.post(
+                f"{settings.llm_api_base}?key={settings.llm_api_key}",
+                json={
+                    "contents": [
+                        {"role": "user", "parts": [{"text": system_prompt + "\n\n" + user_message}]}
+                    ]
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return data["candidates"][0]["content"]["parts"][0]["text"]
+        else:
+            # OpenAI-compatible chat completion (OpenRouter, self-hosted Llama, etc.)
+            base = settings.llm_api_base.rstrip("/")
+            url = base if base.endswith("chat/completions") else f"{base}/chat/completions"
+            payload: dict = {
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message},
+                ],
+            }
+            if settings.llm_model:
+                payload["model"] = settings.llm_model
+            headers = {"Authorization": f"Bearer {settings.llm_api_key}"}
+            if "openrouter.ai" in url:
+                headers["HTTP-Referer"] = "https://localhost"
+                headers["X-Title"] = "WA Business Assistant"
+            resp = await client.post(url, headers=headers, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+            return data["choices"][0]["message"]["content"]
+
+
+def _parse_intent(raw: str) -> Intent:
+    cleaned = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    parsed = json.loads(cleaned)  # raises on malformed JSON -> caught by caller -> fallback
+    intent_type = IntentType(parsed["type"])  # raises on unknown type -> fallback
+    return Intent(
+        type=intent_type,
+        entities=parsed.get("entities", {}) or {},
+        reply_text=parsed.get("reply_text", "") or "",
+    )
