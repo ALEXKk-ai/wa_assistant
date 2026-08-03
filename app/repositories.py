@@ -466,6 +466,8 @@ async def list_pending_payments_older_than(
     """Used by the reconciliation job (app/payments.py) to find stuck
     payments across ALL businesses - intentionally not business_id scoped,
     since it's an internal ops job, never a customer-facing code path."""
+    if cutoff.tzinfo is not None:
+        cutoff = cutoff.replace(tzinfo=None)
     result = await session.execute(
         select(Payment).where(
             Payment.status == PaymentStatus.PENDING, Payment.created_at < cutoff

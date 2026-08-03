@@ -161,7 +161,7 @@ async def handle_callback(session: AsyncSession, callback_body: dict) -> Payment
 
     result_code = stk.get("ResultCode")
     payment.raw_callback_json = json.dumps(callback_body)
-    payment.processed_at = datetime.now(timezone.utc)
+    payment.processed_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
     if result_code == 0:
         items = {i["Name"]: i.get("Value") for i in stk.get("CallbackMetadata", {}).get("Item", [])}
@@ -203,7 +203,7 @@ async def reconcile_pending_payments(session: AsyncSession, business_lookup, stu
             continue
         if status is not None:
             payment.status = status
-            payment.processed_at = datetime.now(timezone.utc)
+            payment.processed_at = datetime.now(timezone.utc).replace(tzinfo=None)
             await session.flush()
             resolved += 1
             logger.info(
