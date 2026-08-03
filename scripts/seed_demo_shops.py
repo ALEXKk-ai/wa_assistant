@@ -92,7 +92,7 @@ async def seed() -> None:
         meta_shop = existing.get(META_PROD_PHONE_ID)
         if not meta_shop:
             meta_shop = Business(
-                name="Luna Hair Studio",
+                name="bloom salon",
                 business_type=BusinessType.SERVICES,
                 whatsapp_phone_number_id=META_PROD_PHONE_ID,
                 whatsapp_token_encrypted=encrypt_secret(PERM_TOKEN),
