@@ -18,8 +18,9 @@ GOODS_PHONE_ID = "demo-goods-shop"
 DEV_TOKEN = "dev-whatsapp-token-not-for-production"
 
 
-async def seed() -> None:
-    await init_db()
+async def seed(run_init: bool = True) -> None:
+    if run_init:
+        await init_db()
     hours = hours_mod.parse_hours_spec("Mon-Sat 09:00-18:00")
 
     async with get_session() as session:

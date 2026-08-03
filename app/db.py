@@ -33,7 +33,7 @@ async def init_db() -> None:
 
     try:
         from scripts.seed_demo_shops import seed
-        await seed()
+        await seed(run_init=False)
     except Exception as e:
         print(f"Auto-seed notification: {e}")
 
