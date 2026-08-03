@@ -6,6 +6,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
+COPY scripts ./scripts
 
 # SQLite DB file lives here - mount a volume to this path in production so
 # data survives container restarts/redeploys.
