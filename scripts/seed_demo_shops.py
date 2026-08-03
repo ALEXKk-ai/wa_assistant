@@ -88,7 +88,9 @@ async def seed() -> None:
 
         META_PROD_PHONE_ID = "1263634996831686"
         PERM_TOKEN = "EAGJZBt6wwOQUBSAFS7sfdvw3pZBtjQZBjFUdDezgKSMSxVZAsfSTQDk2TMqbFvXIjcspqqi1zlNL2ak8jeBK3AW90QCQmO71Kz5tEkKzvPGuE8qtjuceNTQGdVZBsZCKBPckwNWQtYONI2SyQiwnC46Hx1fIZCaHH3eN0Ph6iCXI54VIGFaj1ckBBvVxhqnkbi8rQZDZD"
-        if META_PROD_PHONE_ID not in existing:
+        
+        meta_shop = existing.get(META_PROD_PHONE_ID)
+        if not meta_shop:
             meta_shop = Business(
                 name="Luna Hair Studio",
                 business_type=BusinessType.SERVICES,
@@ -106,6 +108,15 @@ async def seed() -> None:
             )
             session.add(meta_shop)
             await session.flush()
+            print(f"Created Meta production shop id={meta_shop.id} ({meta_shop.name})")
+        else:
+            meta_shop.whatsapp_token_encrypted = encrypt_secret(PERM_TOKEN)
+            await session.flush()
+            print(f"Updated Meta production shop id={meta_shop.id} ({meta_shop.name}) token")
+
+        # Ensure services exist for meta_shop
+        existing_srvs = (await session.execute(select(Service).where(Service.business_id == meta_shop.id))).scalars().all()
+        if not existing_srvs:
             session.add_all(
                 [
                     Service(business_id=meta_shop.id, name="Haircut", price=1500, duration_minutes=45),
@@ -113,7 +124,8 @@ async def seed() -> None:
                     Service(business_id=meta_shop.id, name="Braiding", price=2500, duration_minutes=120),
                 ]
             )
-            print(f"Created Meta production shop id={meta_shop.id} ({meta_shop.name})")
+            await session.flush()
+            print(f"Added default services for shop id={meta_shop.id}")
 
     print("\nShops ready. Run: python -m scripts.simulate_customer")
 
