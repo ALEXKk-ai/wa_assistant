@@ -86,6 +86,35 @@ async def seed() -> None:
         else:
             print(f"Goods shop already exists id={existing[GOODS_PHONE_ID].id}")
 
+        META_PROD_PHONE_ID = "1263634996831686"
+        PERM_TOKEN = "EAGJZBt6wwOQUBSAFS7sfdvw3pZBtjQZBjFUdDezgKSMSxVZAsfSTQDk2TMqbFvXIjcspqqi1zlNL2ak8jeBK3AW90QCQmO71Kz5tEkKzvPGuE8qtjuceNTQGdVZBsZCKBPckwNWQtYONI2SyQiwnC46Hx1fIZCaHH3eN0Ph6iCXI54VIGFaj1ckBBvVxhqnkbi8rQZDZD"
+        if META_PROD_PHONE_ID not in existing:
+            meta_shop = Business(
+                name="Luna Hair Studio",
+                business_type=BusinessType.SERVICES,
+                whatsapp_phone_number_id=META_PROD_PHONE_ID,
+                whatsapp_token_encrypted=encrypt_secret(PERM_TOKEN),
+                owner_whatsapp_number="254103890536",
+                mpesa_shortcode="174379",
+                mpesa_passkey_encrypted=encrypt_secret("dev-passkey"),
+                mpesa_consumer_key_encrypted=encrypt_secret("dev-key"),
+                mpesa_consumer_secret_encrypted=encrypt_secret("dev-secret"),
+                deposit_percentage=20,
+                confirmation_mode=ConfirmationMode.AUTOMATIC,
+                hours_json=json.dumps(hours),
+                timezone="Africa/Nairobi",
+            )
+            session.add(meta_shop)
+            await session.flush()
+            session.add_all(
+                [
+                    Service(business_id=meta_shop.id, name="Haircut", price=1500, duration_minutes=45),
+                    Service(business_id=meta_shop.id, name="Hair Coloring", price=4000, duration_minutes=90),
+                    Service(business_id=meta_shop.id, name="Braiding", price=2500, duration_minutes=120),
+                ]
+            )
+            print(f"Created Meta production shop id={meta_shop.id} ({meta_shop.name})")
+
     print("\nShops ready. Run: python -m scripts.simulate_customer")
 
 

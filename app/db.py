@@ -31,6 +31,12 @@ async def init_db() -> None:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_migrate_schema)
 
+    try:
+        from scripts.seed_demo_shops import seed
+        await seed()
+    except Exception as e:
+        print(f"Auto-seed notification: {e}")
+
 
 def _migrate_schema(connection) -> None:
     """Lightweight additive migrations for existing SQLite databases."""
