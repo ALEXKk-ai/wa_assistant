@@ -89,11 +89,15 @@ _CODE_REQUEST_RE = re.compile(
     re.IGNORECASE,
 )
 _OFFER_RE = re.compile(
-    r"\bdo\s+you\s+(?:offer|have|do|provide)\s+(?P<item>.+?)[?.!]*$",
+    r"\b(?:do\s+you|can\s+i|can\s+we)\s+(?:offer|have|do|get|provide)\s+(?P<item>.+?)[?.!]*$",
     re.IGNORECASE,
 )
 _AVAILABLE_RE = re.compile(
-    r"\b(?:is|are)\s+(?P<item>.+?)\s+available[?.!]*$",
+    r"\b(?:is|are)\s+(?P<item>.+?)\s+(?:available|offered)[?.!]*$",
+    re.IGNORECASE,
+)
+_PRICE_ITEM_RE = re.compile(
+    r"\b(?:cost\s+of|price\s+of|how\s+much\s+(?:for|is|does)\s+|(?:what\s+is\s+the\s+)?price\s+of\s+)(?P<item>.+?)[?.!]*$",
     re.IGNORECASE,
 )
 _SIMPLE_GREETING_RE = re.compile(
@@ -553,7 +557,7 @@ def _extract_catalog_item_question(message_text: str) -> str | None:
     if "what" in lowered and ("offer" in lowered or "have" in lowered or "available" in lowered):
         return None
 
-    match = _OFFER_RE.search(text) or _AVAILABLE_RE.search(text)
+    match = _OFFER_RE.search(text) or _AVAILABLE_RE.search(text) or _PRICE_ITEM_RE.search(text)
     if not match:
         return None
     item = match.group("item").strip(" ?.!,")
