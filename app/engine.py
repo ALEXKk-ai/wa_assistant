@@ -494,12 +494,14 @@ async def _handle_booking_confirm_reject(
         new_status=booking.status.value,
     )
     if customer:
-        await send_business_message(
-            business,
-            customer.phone_number,
-            "Unfortunately your booking couldn't be confirmed - your deposit will be refunded. "
-            "Sorry for the inconvenience.",
-        )
+        if deposit_paid:
+            msg = (
+                "Unfortunately your booking couldn't be confirmed - your deposit will be refunded. "
+                "Sorry for the inconvenience."
+            )
+        else:
+            msg = "Unfortunately your booking couldn't be confirmed. Sorry for the inconvenience."
+        await send_business_message(business, customer.phone_number, msg)
     await owner_workflow.send_ack(business, f"{ref} rejected.")
 
 
