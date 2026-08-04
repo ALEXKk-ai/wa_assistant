@@ -223,6 +223,10 @@ async def handle_inbound_message(
         if intent is None:
             catalog = await _build_catalog_summary(session, business)
             hours = json.loads(business.hours_json or "{}")
+            extra_info = business.extra_info_text or ""
+            if business.deposit_percentage and business.deposit_percentage > 0:
+                dep_info = f"A {business.deposit_percentage:.0f}% deposit via M-Pesa is required for bookings to secure your slot."
+                extra_info = f"{dep_info} {extra_info}".strip() if extra_info else dep_info
             intent = await ai.extract_intent(
                 customer_message=message_text,
                 business_name=business.name,
@@ -232,7 +236,7 @@ async def handle_inbound_message(
                 pending=pending,
                 business_hours_text=hours_mod.format_hours(hours),
                 business_address=business.address_text or "not listed",
-                business_extra_info=business.extra_info_text or "none",
+                business_extra_info=extra_info or "none",
                 fulfillment_policy=getattr(business.fulfillment_mode, "value", "both"),
             )
         else:
@@ -294,6 +298,8 @@ async def _direct_payment_status_reply(
         for phrase in ("resend", "send again", "prompt again", "retry", "didnt get", "didn't get", "another prompt", "new prompt")
     )
     if not is_status_query and not wants_resend:
+        return None
+    if any(phrase in lowered for phrase in ("do you", "how much", "what is", "is there", "require", "required", "need")):
         return None
     if not any(word in lowered for word in ("paid", "payment", "deposit", "mpesa", "m-pesa", "stk", "resend", "prompt", "retry", "again")):
         return None
