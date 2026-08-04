@@ -83,3 +83,21 @@ def verify_mpesa_callback_secret(path_secret: str) -> bool:
     callback URL path against the configured value."""
     settings = get_settings()
     return hmac.compare_digest(path_secret, settings.mpesa_callback_secret)
+
+
+def normalize_phone_number(phone: str) -> str:
+    """Normalizes phone numbers to standard 254... E.164 format.
+
+    Examples:
+        "0712345678" -> "254712345678"
+        "+254712345678" -> "254712345678"
+        "254712345678" -> "254712345678"
+    """
+    if not phone:
+        return ""
+    digits = "".join(c for c in str(phone) if c.isdigit())
+    if digits.startswith("0") and len(digits) == 10:
+        return "254" + digits[1:]
+    if digits.startswith("254") and len(digits) == 12:
+        return digits
+    return digits

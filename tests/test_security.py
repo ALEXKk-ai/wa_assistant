@@ -38,3 +38,12 @@ def test_missing_signature_header_is_rejected():
 
 def test_malformed_signature_header_is_rejected():
     assert verify_whatsapp_signature(b"anything", "not-the-right-format") is False
+
+
+def test_normalize_phone_number():
+    from app.security import normalize_phone_number
+    assert normalize_phone_number("0712345678") == "254712345678"
+    assert normalize_phone_number("0112345678") == "254112345678"
+    assert normalize_phone_number("+254712345678") == "254712345678"
+    assert normalize_phone_number("254712345678") == "254712345678"
+    assert normalize_phone_number("") == ""

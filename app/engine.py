@@ -30,6 +30,7 @@ from app.models import (
     PaymentStatus,
     Product,
 )
+from app.security import normalize_phone_number
 from app.whatsapp import send_business_message
 from app.workflows import customer as customer_workflow
 from app.workflows import owner as owner_workflow
@@ -129,7 +130,7 @@ async def handle_whatsapp_webhook(
         )
         return
 
-    if sender_phone == business.owner_whatsapp_number:
+    if normalize_phone_number(sender_phone) == normalize_phone_number(business.owner_whatsapp_number):
         await handle_owner_command(session, business, text)
         return
 
@@ -286,7 +287,7 @@ async def handle_owner_command(session: AsyncSession, business: Business, text: 
         if not command.args:
             await owner_workflow.send_ack(business, "Usage: TAKEOVER <customer_phone>")
             return
-        customer_phone = command.args[0]
+        customer_phone = normalize_phone_number(command.args[0])
         await _set_takeover(session, business.id, customer_phone, True)
         await owner_workflow.send_ack(
             business, f"Bot paused for {customer_phone}. Use REPLY {customer_phone} <message> to talk to them."
@@ -296,7 +297,7 @@ async def handle_owner_command(session: AsyncSession, business: Business, text: 
         if not command.args:
             await owner_workflow.send_ack(business, "Usage: RELEASE <customer_phone>")
             return
-        customer_phone = command.args[0]
+        customer_phone = normalize_phone_number(command.args[0])
         await _set_takeover(session, business.id, customer_phone, False)
         await owner_workflow.send_ack(business, f"Bot resumed for {customer_phone}.")
 
@@ -304,7 +305,7 @@ async def handle_owner_command(session: AsyncSession, business: Business, text: 
         if len(command.args) < 2:
             await owner_workflow.send_ack(business, "Usage: REPLY <customer_phone> <message>")
             return
-        customer_phone, message = command.args[0], command.args[1]
+        customer_phone, message = normalize_phone_number(command.args[0]), command.args[1]
         await send_business_message(business, customer_phone, message)
 
     elif command.name == "CONFIRM":
