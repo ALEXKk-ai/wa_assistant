@@ -200,27 +200,6 @@ async def healthz(response: Response) -> dict:
         return {"status": "unhealthy", "db": "error", "detail": "Database service unavailable"}
 
 
-@app.get("/admin/setup-bloom-salon")
-async def setup_bloom_salon(secret: str, response: Response) -> dict:
-    if not verify_mpesa_callback_secret(secret):
-        response.status_code = 403
-        return {"status": "error", "detail": "Forbidden"}
-    from app.models import Business
-    from app.security import encrypt_secret
-    async with get_session() as session:
-        result = await session.execute(select(Business))
-        businesses = result.scalars().all()
-        updated = []
-        for b in businesses:
-            if "bloom" in b.name.lower() or b.id in (1, 3):
-                b.mpesa_consumer_key_encrypted = encrypt_secret("Z7UdM0bHvqVRV6WlCRT6oLXzgtCMDbsWxLbTUn2drcZlPsWu")
-                b.mpesa_consumer_secret_encrypted = encrypt_secret("odG2TYC4nMRrz9LixCDdU07BuLf5nNApoIrmSDeUs32sZUpAFGVom1PJPcAIDK0E")
-                b.mpesa_passkey_encrypted = encrypt_secret("bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919")
-                b.mpesa_shortcode = "174379"
-                b.deposit_percentage = 20.0
-                updated.append(f"id={b.id} ({b.name})")
-        await session.commit()
-        return {"status": "ok", "message": f"Updated M-Pesa credentials for: {', '.join(updated)}"}
 
 
 @app.post("/admin/update-business-mpesa")
