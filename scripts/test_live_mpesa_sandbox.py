@@ -56,14 +56,14 @@ async def main():
             payment = await initiate_deposit(
                 session, business, phone, amount, callback_path_secret="mpesa_callback_secret_12345"
             )
-            print(f"\n✅ Payment row created id={payment.id}, status={payment.status.value}")
+            print(f"\n[OK] Payment row created id={payment.id}, status={payment.status.value}")
             if payment.checkout_request_id:
-                print(f"✅ STK Push Sent! CheckoutRequestID: {payment.checkout_request_id}")
+                print(f"[OK] STK Push Sent! CheckoutRequestID: {payment.checkout_request_id}")
                 print(f"MerchantRequestID: {payment.merchant_request_id}")
             else:
-                print("⚠️ STK Push initiated (pending checkout request ID assignment)")
+                print("[INFO] STK Push initiated (pending checkout request ID assignment)")
         except Exception as err:
-            print(f"\n❌ Error during STK Push: {err}")
+            print(f"\n[ERROR] Error during STK Push: {err}")
 
 
 if __name__ == "__main__":
