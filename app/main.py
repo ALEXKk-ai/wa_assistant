@@ -197,4 +197,4 @@ async def healthz(response: Response) -> dict:
     except Exception as exc:
         logger.error("Health check failed - database query failed", extra=log_extra(error=str(exc)))
         response.status_code = 503
-        return {"status": "unhealthy", "db": "error", "detail": str(exc)}
+        return {"status": "unhealthy", "db": "error", "detail": "Database service unavailable"}
