@@ -23,6 +23,7 @@ The one rule this module still enforces: a slow or broken LLM must never
 crash or silently stall a conversation - every call is wrapped in a
 timeout + bounded retry, and any failure degrades to FALLBACK_INTENT.
 """
+import asyncio
 import json
 from dataclasses import dataclass, field
 from enum import Enum
@@ -188,6 +189,8 @@ async def extract_intent(
                 settings.llm_max_retries + 1,
                 extra=log_extra(error=str(exc)),
             )
+            if attempt < settings.llm_max_retries:
+                await asyncio.sleep(1.0 * (attempt + 1))
 
     if settings.gemini_api_key and settings.llm_provider != "gemini":
         try:
