@@ -36,8 +36,9 @@ HELP_TEXT = (
     "TAKEOVER <phone> - pause the bot for a customer\n"
     "RELEASE <phone> - hand the conversation back to the bot\n"
     "REPLY <phone> <message> - message a customer directly\n"
-    "CONFIRM B<id> / CONFIRM O<id> - confirm a booking/order\n"
-    "REJECT B<id> / REJECT O<id> - reject a booking/order"
+    "CONFIRM B<id> / CONFIRM O<id> - accept a booking/order\n"
+    "DECLINE B<id> - decline slot & ask customer for new time (keeps deposit)\n"
+    "REJECT B<id> / REJECT O<id> - cancel a booking/order & refund deposit"
 )
 
 

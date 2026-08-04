@@ -493,11 +493,17 @@ async def expire_stale_pending_deposit_bookings(
         )
     )
     stale = list(result.scalars().all())
+    expired_count = 0
     for booking in stale:
+        if booking.payment_id:
+            payment = await session.get(Payment, booking.payment_id)
+            if payment is not None and payment.status == PaymentStatus.COMPLETED:
+                continue  # Payment was completed - guard against accidental cancellation!
         booking.status = BookingStatus.CANCELLED
-    if stale:
+        expired_count += 1
+    if expired_count:
         await session.flush()
-    return len(stale)
+    return expired_count
 
 
 async def reduce_stock_for_order(session: AsyncSession, order: Order) -> None:

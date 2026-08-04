@@ -59,3 +59,25 @@ async def test_overlapping_slot_is_also_rejected(session, business):
         await repo.create_booking(
             session, business.id, customer.id, service.id, overlap_start, overlap_end, 400
         )
+
+
+async def test_expire_stale_bookings_skips_completed_payments(session, business):
+    from app.models import BookingStatus, PaymentStatus
+    service = Service(business_id=business.id, name="Nails", price=1000, duration_minutes=30)
+    session.add(service)
+    await session.flush()
+    customer = await repo.get_or_create_customer(session, business.id, "254799001122")
+    start = datetime.now() - timedelta(minutes=40)
+    booking = await repo.create_booking(
+        session, business.id, customer.id, service.id, start, start + timedelta(minutes=30), 200
+    )
+    booking.created_at = datetime.now() - timedelta(minutes=40)
+    payment = await repo.create_payment(session, business.id, "idem-completed-guard", 200)
+    payment.status = PaymentStatus.COMPLETED
+    booking.payment_id = payment.id
+    await session.flush()
+
+    expired_count = await repo.expire_stale_pending_deposit_bookings(session, timeout_minutes=30)
+    assert expired_count == 0
+    refreshed = await repo.get_booking_for_business(session, business.id, booking.id)
+    assert refreshed.status == BookingStatus.PENDING_DEPOSIT
