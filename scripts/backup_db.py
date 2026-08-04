@@ -21,11 +21,11 @@ from app.config import get_settings
 
 async def export_database() -> str:
     settings = get_settings()
-    db_url = settings.database_url
+    db_url = os.environ.get("DATABASE_URL") or settings.database_url
 
-    # Default to Render production PostgreSQL host if local settings point to sqlite/localhost
-    if "sqlite" in db_url or "localhost" in db_url:
-        db_url = "postgresql+asyncpg://wa_assistant_user:kHWyOwRDTdXXVHFFHXWk1Jfn1zRFaKu7@dpg-d9o9a80ae00c73b0k170-a.frankfurt-postgres.render.com/wa_assistant"
+    if not db_url or "sqlite" in db_url:
+        print("ERROR: DATABASE_URL must be configured with a valid PostgreSQL connection string in environment variables or .env file.")
+        sys.exit(1)
 
     print("Connecting to PostgreSQL database...")
     engine = create_async_engine(db_url, echo=False)
