@@ -187,6 +187,130 @@ async def test_out_of_scope_question_is_forwarded_to_owner_not_improvised(sessio
     assert any(question in t for t in owner_msgs), "the actual customer question must reach the owner"
 
 
+async def test_other_services_question_gets_compact_catalog_not_owner_escalation(session, business, monkeypatch, sent_messages):
+    await _add_haircut(session, business)
+
+    async def _fail_extract_intent(*args, **kwargs):
+        raise AssertionError("other-services question should be answered from the catalog before the LLM")
+
+    monkeypatch.setattr(ai, "extract_intent", _fail_extract_intent)
+
+    phone = "254711116667"
+    question = "Which other services do you offer apart from the ones listed?"
+    reply = await customer_mod.handle_inbound_message(session, business, phone, question, "cb-secret")
+
+    assert "haircut" in reply.lower()
+    assert "currently offer" in reply.lower()
+    owner_msgs = [t for to, t in sent_messages if to == business.owner_whatsapp_number]
+    assert owner_msgs == []
+
+
+async def test_specific_unlisted_service_variant_is_not_assumed_available(session, business, monkeypatch, sent_messages):
+    from app.models import Service
+
+    session.add(Service(business_id=business.id, name="Braids", price=2500, duration_minutes=120))
+    await session.flush()
+
+    async def _fail_extract_intent(*args, **kwargs):
+        raise AssertionError("availability question should be answered from the catalog before the LLM")
+
+    monkeypatch.setattr(ai, "extract_intent", _fail_extract_intent)
+
+    reply = await customer_mod.handle_inbound_message(
+        session,
+        business,
+        "254711116668",
+        "Do you offer coiled braids?",
+        "cb-secret",
+    )
+
+    assert "don't currently list coiled braids" in reply.lower()
+    assert sent_messages == []
+
+
+async def test_acknowledgement_gets_short_social_reply(session, business, monkeypatch, sent_messages):
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(
+                type=ai.IntentType.ASK_INFO,
+                conversation_act=ai.ConversationAct.ACKNOWLEDGEMENT,
+                entities={},
+                reply_text="",
+            )
+        ],
+    )
+
+    reply = await customer_mod.handle_inbound_message(
+        session, business, "254711116669", "thank you", "cb-secret"
+    )
+
+    assert reply == "You're welcome."
+    assert sent_messages == []
+
+
+async def test_uncertain_attendance_asks_cancel_or_reschedule_without_acting(session, business, monkeypatch, sent_messages):
+    from app import repositories as repo
+
+    service = await _add_haircut(session, business)
+    customer = await repo.get_or_create_customer(session, business.id, "254711116670")
+    slot = datetime.now() + timedelta(days=1)
+    slot = slot.replace(hour=14, minute=0, second=0, microsecond=0)
+    booking = await repo.create_booking(
+        session,
+        business.id,
+        customer.id,
+        service.id,
+        slot,
+        slot + timedelta(minutes=service.duration_minutes),
+        100,
+    )
+
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(
+                type=ai.IntentType.ASK_INFO,
+                conversation_act=ai.ConversationAct.UNCERTAIN_ATTENDANCE,
+                entities={"date_text": "tomorrow"},
+                reply_text="",
+            )
+        ],
+    )
+
+    reply = await customer_mod.handle_inbound_message(
+        session, business, customer.phone_number, "I don't think I'll make it tomorrow", "cb-secret"
+    )
+
+    assert "cancel or reschedule" in reply.lower()
+    assert booking.status.value == "pending_deposit"
+    assert sent_messages == []
+
+
+async def test_owner_authority_route_escalates_even_with_ai_reply_text(session, business, monkeypatch, sent_messages):
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(
+                type=ai.IntentType.ASK_INFO,
+                conversation_act=ai.ConversationAct.PROPOSAL,
+                authority_route=ai.AuthorityRoute.OWNER_AUTHORITY_REQUIRED,
+                entities={},
+                reply_text="Sure, we can partner with you.",
+            )
+        ],
+    )
+
+    phone = "254711116671"
+    question = "I want to discuss a new commercial arrangement with your shop"
+    reply = await customer_mod.handle_inbound_message(session, business, phone, question, "cb-secret")
+
+    assert "passed" in reply.lower() or "team" in reply.lower()
+    assert "partner with you" not in reply.lower()
+    owner_msgs = [t for to, t in sent_messages if to == business.owner_whatsapp_number]
+    assert any(question in t for t in owner_msgs)
+
+
 async def test_cancel_clears_pending_state(session, business, monkeypatch, sent_messages):
     await _add_haircut(session, business)
 

@@ -105,7 +105,14 @@ _PAYMENT_STATUS_RE = re.compile(
     re.IGNORECASE,
 )
 _UNGROUNDED_INFO_RE = re.compile(
-    r"\b(bring|own|policy|refund|discount|negotiate|custom)\b",
+    r"\b(bring|own|policy|refund|discount|negotiate|custom|proposal|partnership|collaborat|sponsor|complaint|manager|human|owner)\b",
+    re.IGNORECASE,
+)
+_UNLISTED_CATALOG_RE = re.compile(
+    r"\b(?:apart from|besides|other than|outside of|not listed|not on (?:the )?list|unlisted|any other|which other|what other)\b"
+    r".*\b(?:services?|products?|items?|goods)\b"
+    r"|\b(?:services?|products?|items?|goods)\b"
+    r".*\b(?:apart from|besides|other than|outside of|not listed|not on (?:the )?list|unlisted|else)\b",
     re.IGNORECASE,
 )
 _TIME_WITH_MERIDIEM_RE = re.compile(r"\b(?P<hour>\d{1,2})(?::(?P<minute>[0-5]\d))?\s*(?P<period>a\.?m\.?|p\.?m\.?)\b", re.IGNORECASE)
@@ -237,9 +244,15 @@ async def handle_inbound_message(
             "Intent classified",
             extra=log_extra(business_id=business.id, intent=intent.type.value, stage=stage),
         )
-        reply_text, new_stage, new_pending = await _dispatch(
-            session, business, customer, customer_phone, message_text, intent, stage, pending, mpesa_callback_secret
+        pre_routed = await _pre_route_conversation_act(
+            session, business, customer, customer_phone, message_text, intent, stage, pending
         )
+        if pre_routed is not None:
+            reply_text, new_stage, new_pending = pre_routed
+        else:
+            reply_text, new_stage, new_pending = await _dispatch(
+                session, business, customer, customer_phone, message_text, intent, stage, pending, mpesa_callback_secret
+            )
 
     history.append({"role": "bot", "text": reply_text})
     history = history[-MAX_HISTORY_ENTRIES:]
@@ -492,6 +505,9 @@ async def _direct_catalog_availability_reply(
     """Answer obvious "do you offer X?" questions without asking the LLM to
     choose between services/products. This keeps a services shop from falling
     into the goods/product-list response when the requested service is absent."""
+    if _UNLISTED_CATALOG_RE.search(message_text):
+        return await _compact_catalog_text(session, business)
+
     item = _extract_catalog_item_question(message_text)
     if not item:
         return None
@@ -546,10 +562,6 @@ def _find_named_item(requested: str, names: list[str]) -> str | None:
     for name in names:
         if name.strip().lower() == requested_lower:
             return name
-    for name in names:
-        name_lower = name.strip().lower()
-        if requested_lower in name_lower or name_lower in requested_lower:
-            return name
     return None
 
 
@@ -563,7 +575,12 @@ def _deterministic_intent(
             reply_text=f"I'm the virtual assistant for {business.name}! I can only assist with our listed services, products, bookings, and operating hours.",
         )
     if _UNGROUNDED_INFO_RE.search(message_text):
-        return ai.Intent(type=ai.IntentType.OUT_OF_SCOPE, entities={})
+        return ai.Intent(
+            type=ai.IntentType.OUT_OF_SCOPE,
+            entities={},
+            conversation_act=ai.ConversationAct.HUMAN_REQUEST,
+            authority_route=ai.AuthorityRoute.OWNER_AUTHORITY_REQUIRED,
+        )
 
     if stage not in _ACTIVE_DETAIL_STAGES or pending.get("type") not in _ACTIVE_DETAIL_TYPES:
         return None
@@ -607,6 +624,90 @@ def _extract_active_detail_entities(
         if time_text:
             entities["time_text"] = time_text
     return entities
+
+
+_OWNER_AUTHORITY_ACTS = {
+    ai.ConversationAct.COMPLAINT,
+    ai.ConversationAct.HUMAN_REQUEST,
+    ai.ConversationAct.PROPOSAL,
+}
+
+
+async def _pre_route_conversation_act(
+    session: AsyncSession,
+    business: Business,
+    customer,
+    customer_phone: str,
+    message_text: str,
+    intent: ai.Intent,
+    stage: str,
+    pending: dict,
+) -> tuple[str, str, dict] | None:
+    act = intent.conversation_act
+
+    if (
+        intent.authority_route == ai.AuthorityRoute.OWNER_AUTHORITY_REQUIRED
+        or act in _OWNER_AUTHORITY_ACTS
+    ):
+        await owner_workflow.notify_owner_unanswered_question(
+            business, customer_phone, message_text, customer_name=customer.name
+        )
+        return "I've passed this to the team. They'll get back to you soon.", stage, pending
+
+    if intent.authority_route == ai.AuthorityRoute.UNCLEAR or act == ai.ConversationAct.UNCLEAR:
+        return "Could you clarify what you'd like help with?", stage, pending
+
+    if act == ai.ConversationAct.UNCERTAIN_ATTENDANCE:
+        return await _uncertain_attendance_reply(session, business, customer, message_text, intent)
+
+    if act in (ai.ConversationAct.ACKNOWLEDGEMENT, ai.ConversationAct.CLOSING):
+        if intent.type in (ai.IntentType.CONFIRM_ACTION, ai.IntentType.CANCEL_ACTION):
+            return None
+        if stage != STAGE_IDLE or pending:
+            return "No problem. Reply YES to confirm, or tell me what to change.", stage, pending
+        if act == ai.ConversationAct.CLOSING:
+            return "No problem. Message us anytime.", STAGE_IDLE, {}
+        return "You're welcome.", STAGE_IDLE, {}
+
+    return None
+
+
+async def _uncertain_attendance_reply(
+    session: AsyncSession,
+    business: Business,
+    customer,
+    message_text: str,
+    intent: ai.Intent,
+) -> tuple[str, str, dict]:
+    if business.business_type != BusinessType.SERVICES:
+        return "Do you have an order you'd like help with?", STAGE_IDLE, {}
+
+    bookings = await repo.list_upcoming_bookings_for_customer(session, business.id, customer.id)
+    date_text = (intent.entities or {}).get("date_text") or _extract_date_text(message_text)
+    parsed_date = _parse_date_text(date_text) if date_text else None
+    if parsed_date is not None:
+        bookings = [b for b in bookings if b.slot_start.date() == parsed_date.date()]
+
+    if not bookings:
+        return "Do you have a booking you'd like to cancel or reschedule?", STAGE_IDLE, {}
+
+    if len(bookings) == 1:
+        booking = bookings[0]
+        service = await repo.get_service_for_business(session, business.id, booking.service_id)
+        service_name = service.name if service else "your booking"
+        return (
+            f"Would you like to cancel or reschedule your {service_name} on "
+            f"{booking.slot_start:%d %b at %H:%M}?",
+            STAGE_IDLE,
+            {},
+        )
+
+    lines = ["Which booking do you mean? You can say cancel or reschedule."]
+    for i, booking in enumerate(bookings, start=1):
+        service = await repo.get_service_for_business(session, business.id, booking.service_id)
+        service_name = service.name if service else "a service"
+        lines.append(f"{i}. {service_name} on {booking.slot_start:%d %b at %H:%M}")
+    return "\n".join(lines), STAGE_IDLE, {}
 
 
 def _extract_date_text(message_text: str, pending: dict | None = None) -> str | None:
@@ -904,6 +1005,21 @@ async def _list_products_text(session: AsyncSession, business: Business, header:
         lines.append(f"- {p.name}: KES {_fmt_price(p.price)}{stock_note}")
     lines.append("\nJust tell me which one and how many you'd like.")
     return "\n".join(lines)
+
+
+async def _compact_catalog_text(session: AsyncSession, business: Business) -> str:
+    if business.business_type == BusinessType.SERVICES:
+        services = await repo.list_services(session, business.id)
+        if not services:
+            return "We don't have any services listed right now."
+        names = ", ".join(s.name for s in services)
+        return f"These are the services we currently offer: {names}."
+
+    products = await repo.list_products(session, business.id)
+    if not products:
+        return "We don't have any products listed right now."
+    names = ", ".join(p.name for p in products)
+    return f"These are the products we currently have listed: {names}."
 
 
 async def _grounded_info_reply(

@@ -52,11 +52,33 @@ class IntentType(str, Enum):
     FALLBACK = "FALLBACK"  # LLM call itself failed - code-level only, never an LLM classification
 
 
+class ConversationAct(str, Enum):
+    REQUEST = "REQUEST"
+    QUESTION = "QUESTION"
+    ACKNOWLEDGEMENT = "ACKNOWLEDGEMENT"
+    CLOSING = "CLOSING"
+    CORRECTION = "CORRECTION"
+    UNCERTAIN_ATTENDANCE = "UNCERTAIN_ATTENDANCE"
+    COMPLAINT = "COMPLAINT"
+    HUMAN_REQUEST = "HUMAN_REQUEST"
+    PROPOSAL = "PROPOSAL"
+    UNCLEAR = "UNCLEAR"
+
+
+class AuthorityRoute(str, Enum):
+    NORMAL = "NORMAL"
+    OWNER_AUTHORITY_REQUIRED = "OWNER_AUTHORITY_REQUIRED"
+    OFF_TOPIC = "OFF_TOPIC"
+    UNCLEAR = "UNCLEAR"
+
+
 @dataclass
 class Intent:
     type: IntentType
     entities: dict = field(default_factory=dict)
     reply_text: str = ""
+    conversation_act: ConversationAct = ConversationAct.REQUEST
+    authority_route: AuthorityRoute = AuthorityRoute.NORMAL
 
 
 FALLBACK_INTENT = Intent(
@@ -73,6 +95,8 @@ Given the business's catalog, operating hours, recent conversation history, and 
 in progress, analyze the customer's message and respond ONLY with JSON matching this schema, no markdown:
 
 {{"type": "ASK_INFO|LIST_SERVICES|LIST_PRODUCTS|BOOK_SERVICE|BUY_PRODUCT|CHECK_STATUS|CANCEL_BOOKING|CANCEL_ORDER|RESCHEDULE_BOOKING|CONFIRM_ACTION|CANCEL_ACTION|OUT_OF_SCOPE|OFF_TOPIC", \
+"conversation_act": "REQUEST|QUESTION|ACKNOWLEDGEMENT|CLOSING|CORRECTION|UNCERTAIN_ATTENDANCE|COMPLAINT|HUMAN_REQUEST|PROPOSAL|UNCLEAR", \
+"authority_route": "NORMAL|OWNER_AUTHORITY_REQUIRED|OFF_TOPIC|UNCLEAR", \
 "entities": {{"service_name": null, "product_name": null, "quantity": null, "date_text": null, "time_text": null, "fulfillment_type": null, "delivery_address": null, "payment_phone": null}}, \
 "reply_text": "<natural, friendly reply to send the customer, used for ASK_INFO, LIST_SERVICES, LIST_PRODUCTS, CHECK_STATUS, OFF_TOPIC, and general chat>"}}
 
@@ -88,6 +112,8 @@ Rules for classification:
 - RESCHEDULE_BOOKING: Customer wants to move an existing booking to a new time.
 - CONFIRM_ACTION: Customer agrees to proceed with an in-progress action ("yes", "confirm", "go ahead").
 - CANCEL_ACTION: Customer wants to abandon an in-progress draft action ("nevermind", "stop").
+- conversation_act captures what the message is doing socially: thanks/bye = ACKNOWLEDGEMENT/CLOSING, "I might not make it tomorrow" = UNCERTAIN_ATTENDANCE, "no, I meant 3pm" = CORRECTION, complaints = COMPLAINT, requests for a person = HUMAN_REQUEST, business partnership/wholesale/sponsorship proposals = PROPOSAL.
+- authority_route should be OWNER_AUTHORITY_REQUIRED only when the customer asks for something the bot has no authority to decide (proposal, partnership, complaint, negotiation, custom deal, refund exception, explicit human/owner request). Keep catalog availability questions NORMAL so the app can answer yes/no from the database.
 - OUT_OF_SCOPE: Use ONLY for business-relevant questions missing from the catalog, hours, address, and extra info (e.g. custom pricing, wholesale, complaints, unlisted services/products). Do NOT guess answers — leave reply_text empty so the human shop owner gets notified!
 - OFF_TOPIC: Use for completely irrelevant, non-business queries (e.g. writing code, weather, recipes, general trivia, random chat). Provide a polite assistant boundary in reply_text (e.g. "I'm the virtual assistant for {business_name}! I can only assist with our listed services, bookings, products, and operating hours..."). Do NOT notify the shop owner for OFF_TOPIC.
 - ASK_INFO / LIST_SERVICES / LIST_PRODUCTS: Answer questions using the catalog, operating hours, address, and extra info provided below. Use reply_text to provide a warm, helpful, natural response to questions about location, parking, policies, hours, prices, or services. If the catalog/hours were already shown in recent history and the customer is acknowledging ("just checking", "thanks", "okay bye"), respond naturally in reply_text without re-listing the whole catalog.
@@ -232,4 +258,6 @@ def _parse_intent(raw: str) -> Intent:
         type=intent_type,
         entities=parsed.get("entities", {}) or {},
         reply_text=parsed.get("reply_text", "") or "",
+        conversation_act=ConversationAct(parsed.get("conversation_act") or ConversationAct.REQUEST.value),
+        authority_route=AuthorityRoute(parsed.get("authority_route") or AuthorityRoute.NORMAL.value),
     )

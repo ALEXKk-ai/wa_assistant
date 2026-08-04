@@ -1,0 +1,10 @@
+id,category,passed,messages,final_reply,owner_count,llm_called,llm_traces,issues,elapsed_ms
+ack_thanks_001,acknowledgement,True,please thank you,You're welcome.,0,True,"[{""called"": true, ""type"": ""ASK_INFO"", ""conversation_act"": ""ACKNOWLEDGEMENT"", ""authority_route"": ""NORMAL"", ""fallback"": false, ""error"": """"}]",,3637
+closing_002,acknowledgement,True,kindly okay bye,No problem. Message us anytime.,0,True,"[{""called"": true, ""type"": ""ASK_INFO"", ""conversation_act"": ""CLOSING"", ""authority_route"": ""NORMAL"", ""fallback"": false, ""error"": """"}]",,3338
+catalog_services_003,catalog,True,"hi, What services do you offer?","Here's what Eval Salon offers:
+- Haircut: KES 1,500 (45 min)
+- Braids: KES 2,500 (120 min)
+- Manicure: KES 900 (45 min)
+- Hair Coloring: KES 4,000 (90 min)
+
+Just tell me which one and when you'd like to come in.",0,True,"[{""called"": true, ""type"": ""LIST_SERVICES"", ""conversation_act"": ""REQUEST"", ""authority_route"": ""NORMAL"", ""fallback"": false, ""error"": """"}]",,2325

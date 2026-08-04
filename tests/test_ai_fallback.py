@@ -60,7 +60,7 @@ async def test_unknown_intent_type_degrades_to_fallback(monkeypatch):
 
 async def test_successful_response_is_parsed_correctly(monkeypatch):
     async def _returns_valid(*args, **kwargs):
-        return '{"type": "LIST_SERVICES", "entities": {}, "reply_text": "here you go"}'
+        return '{"type": "LIST_SERVICES", "conversation_act": "QUESTION", "authority_route": "NORMAL", "entities": {}, "reply_text": "here you go"}'
 
     monkeypatch.setattr(ai, "_call_llm", _returns_valid)
 
@@ -72,4 +72,6 @@ async def test_successful_response_is_parsed_correctly(monkeypatch):
     )
 
     assert intent.type == ai.IntentType.LIST_SERVICES
+    assert intent.conversation_act == ai.ConversationAct.QUESTION
+    assert intent.authority_route == ai.AuthorityRoute.NORMAL
     assert intent.reply_text == "here you go"
