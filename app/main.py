@@ -198,3 +198,55 @@ async def healthz(response: Response) -> dict:
         logger.error("Health check failed - database query failed", extra=log_extra(error=str(exc)))
         response.status_code = 503
         return {"status": "unhealthy", "db": "error", "detail": "Database service unavailable"}
+
+
+@app.get("/admin/setup-bloom-salon")
+async def setup_bloom_salon(secret: str, response: Response) -> dict:
+    if not verify_mpesa_callback_secret(secret):
+        response.status_code = 403
+        return {"status": "error", "detail": "Forbidden"}
+    from app.models import Business
+    from app.security import encrypt_secret
+    async with get_session() as session:
+        result = await session.execute(select(Business))
+        businesses = result.scalars().all()
+        updated = []
+        for b in businesses:
+            if "bloom" in b.name.lower() or b.id in (1, 3):
+                b.mpesa_consumer_key_encrypted = encrypt_secret("Z7UdM0bHvqVRV6WlCRT6oLXzgtCMDbsWxLbTUn2drcZlPsWu")
+                b.mpesa_consumer_secret_encrypted = encrypt_secret("odG2TYC4nMRrz9LixCDdU07BuLf5nNApoIrmSDeUs32sZUpAFGVom1PJPcAIDK0E")
+                b.mpesa_passkey_encrypted = encrypt_secret("bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919")
+                b.mpesa_shortcode = "174379"
+                b.deposit_percentage = 20.0
+                updated.append(f"id={b.id} ({b.name})")
+        await session.commit()
+        return {"status": "ok", "message": f"Updated M-Pesa credentials for: {', '.join(updated)}"}
+
+
+@app.post("/admin/update-business-mpesa")
+async def update_business_mpesa_endpoint(
+    secret: str,
+    business_id: int,
+    consumer_key: str,
+    consumer_secret: str,
+    shortcode: str,
+    passkey: str,
+    response: Response,
+) -> dict:
+    if not verify_mpesa_callback_secret(secret):
+        response.status_code = 403
+        return {"status": "error", "detail": "Forbidden"}
+    from app.models import Business
+    from app.security import encrypt_secret
+    async with get_session() as session:
+        res = await session.execute(select(Business).where(Business.id == business_id))
+        business = res.scalars().first()
+        if not business:
+            response.status_code = 404
+            return {"status": "error", "detail": f"Business {business_id} not found"}
+        business.mpesa_shortcode = shortcode
+        business.mpesa_consumer_key_encrypted = encrypt_secret(consumer_key)
+        business.mpesa_consumer_secret_encrypted = encrypt_secret(consumer_secret)
+        business.mpesa_passkey_encrypted = encrypt_secret(passkey)
+        await session.commit()
+        return {"status": "ok", "message": f"Updated M-Pesa credentials for business id={business.id} ({business.name})"}
