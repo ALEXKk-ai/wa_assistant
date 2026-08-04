@@ -163,7 +163,23 @@ async def extract_intent(
                 extra=log_extra(error=str(exc)),
             )
 
-    logger.error("LLM call exhausted retries, falling back", extra=log_extra(error=str(last_error)))
+    if settings.gemini_api_key and settings.llm_provider != "gemini":
+        try:
+            logger.info("Primary LLM failed; trying secondary Gemini backup LLM")
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={settings.gemini_api_key}"
+            async with httpx.AsyncClient(timeout=settings.llm_timeout_seconds) as client:
+                resp = await client.post(
+                    url,
+                    json={"contents": [{"role": "user", "parts": [{"text": prompt + "\n\n" + customer_message}]}]},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                raw = data["candidates"][0]["content"]["parts"][0]["text"]
+                return _parse_intent(raw)
+        except Exception as exc:
+            logger.warning("Secondary Gemini LLM fallback also failed", extra=log_extra(error=str(exc)))
+
+    logger.error("LLM calls exhausted retries, falling back", extra=log_extra(error=str(last_error)))
     return FALLBACK_INTENT
 
 

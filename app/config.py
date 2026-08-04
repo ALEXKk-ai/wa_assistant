@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_api_base: str = ""
     llm_model: str = ""
+    gemini_api_key: str = ""
     llm_timeout_seconds: float = 8.0
     llm_max_retries: int = 2
 
