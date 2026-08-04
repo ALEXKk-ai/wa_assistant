@@ -216,6 +216,12 @@ async def handle_inbound_message(
         direct_reply = await _direct_pending_booking_reference_reply(session, business, customer, message_text)
     if direct_reply is None:
         direct_reply = await _direct_catalog_availability_reply(session, business, message_text)
+    if direct_reply is None:
+        direct_reply = _direct_location_reply(business, message_text)
+    if direct_reply is None:
+        direct_reply = _direct_hours_reply(business, message_text)
+    if direct_reply is None:
+        direct_reply = _direct_payment_methods_reply(business, message_text)
 
     if direct_reply is not None:
         if isinstance(direct_reply, tuple):
@@ -509,6 +515,31 @@ def _looks_like_weekday_reference(lowered_text: str) -> bool:
             "today",
         )
     )
+
+
+def _direct_location_reply(business: Business, message_text: str) -> str | None:
+    lowered = message_text.lower()
+    if any(phrase in lowered for phrase in ("where located", "where are you", "where is your", "your address", "your location", "how do i get there", "directions to")):
+        if business.address_text:
+            return f"We are located at: {business.address_text}. Let us know if you'd like to book an appointment or ask about our services!"
+        return f"We are located at {business.name}! Let us know if you'd like to book an appointment or ask about our services."
+    return None
+
+
+def _direct_hours_reply(business: Business, message_text: str) -> str | None:
+    lowered = message_text.lower()
+    if any(phrase in lowered for phrase in ("operating hours", "working hours", "opening hours", "open on", "what time do you open", "what time do you close")):
+        hours = json.loads(business.hours_json or "{}")
+        formatted = hours_mod.format_hours(hours)
+        return f"Our operating hours are:\n{formatted}\n\nLet us know when you'd like to visit!"
+    return None
+
+
+def _direct_payment_methods_reply(business: Business, message_text: str) -> str | None:
+    lowered = message_text.lower()
+    if any(phrase in lowered for phrase in ("accept mpesa", "accept m-pesa", "take mpesa", "take m-pesa", "pay cash", "take cash", "accept cash", "payment methods", "how do i pay")):
+        return "We accept M-Pesa for deposit payments and M-Pesa or cash on arrival!"
+    return None
 
 
 async def _direct_catalog_availability_reply(
