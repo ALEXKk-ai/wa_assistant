@@ -1850,6 +1850,10 @@ def _parse_date_text(date_text: str) -> datetime | None:
     rather than being silently walked forward into the far future."""
     now = datetime.now()
     lowered = date_text.lower()
+    if "day after tomorrow" in lowered:
+        return (now + timedelta(days=2)).replace(hour=0, minute=0, second=0, microsecond=0)
+    if "tomorrow" in lowered or "tmr" in lowered or "tmrw" in lowered:
+        return (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
     has_next_week = "next week" in lowered
     try:
         parsed = dateutil_parser.parse(date_text, default=now.replace(microsecond=0), fuzzy=True)

@@ -45,3 +45,16 @@ def test_parse_next_week_weekday():
     assert result_this is not None
     assert result_next is not None
     assert (result_next.date() - result_this.date()).days == 7
+
+
+def test_parse_tomorrow_phrases():
+    now = datetime.now()
+    tmr = _parse_date_text("tomorrow")
+    tmr_slang = _parse_date_text("tmrw")
+    day_after = _parse_date_text("day after tomorrow")
+    assert tmr is not None
+    assert (tmr.date() - now.date()).days == 1
+    assert tmr_slang is not None
+    assert (tmr_slang.date() - now.date()).days == 1
+    assert day_after is not None
+    assert (day_after.date() - now.date()).days == 2
