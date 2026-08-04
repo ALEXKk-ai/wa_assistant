@@ -171,9 +171,17 @@ async def handle_callback(session: AsyncSession, callback_body: dict) -> Payment
 
     if result_code == 0:
         items = {i["Name"]: i.get("Value") for i in stk.get("CallbackMetadata", {}).get("Item", [])}
-        payment.status = PaymentStatus.COMPLETED
-        receipt = items.get("MpesaReceiptNumber")
-        payment.mpesa_receipt = str(receipt) if receipt else f"no-receipt-{payment.idempotency_key}"
+        callback_amount = items.get("Amount")
+        if callback_amount is not None and float(callback_amount) < float(payment.amount):
+            logger.warning(
+                "M-Pesa callback amount mismatch (possible tampering)",
+                extra=log_extra(payment_id=payment.id, expected=payment.amount, received=callback_amount),
+            )
+            payment.status = PaymentStatus.FAILED
+        else:
+            payment.status = PaymentStatus.COMPLETED
+            receipt = items.get("MpesaReceiptNumber")
+            payment.mpesa_receipt = str(receipt) if receipt else f"no-receipt-{payment.idempotency_key}"
     else:
         payment.status = PaymentStatus.FAILED
 
@@ -185,7 +193,9 @@ async def handle_callback(session: AsyncSession, callback_body: dict) -> Payment
     return payment
 
 
-async def reconcile_pending_payments(session: AsyncSession, business_lookup, stuck_after_minutes: int = 15) -> int:
+async def reconcile_pending_payments(
+    session: AsyncSession, business_lookup, stuck_after_minutes: int = 15, on_payment_completed=None
+) -> int:
     """Finds payments stuck PENDING past the timeout and queries M-Pesa's
     transaction status API directly. business_lookup is an async callable
     business_id -> Business, injected to avoid a circular import.
@@ -216,6 +226,8 @@ async def reconcile_pending_payments(session: AsyncSession, business_lookup, stu
                 "Reconciliation resolved stuck payment",
                 extra=log_extra(payment_id=payment.id, status=status.value),
             )
+            if status == PaymentStatus.COMPLETED and on_payment_completed is not None:
+                await on_payment_completed(payment)
     return resolved
 
 

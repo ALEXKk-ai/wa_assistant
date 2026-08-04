@@ -143,14 +143,9 @@ async def handle_whatsapp_webhook(
     await send_business_message(business, sender_phone, reply_text)
 
 
-async def handle_mpesa_callback(session: AsyncSession, callback_body: dict, business_lookup) -> None:
-    payment = await payments_module.handle_callback(session, callback_body)
+async def process_payment_completion_side_effects(session: AsyncSession, payment, business_lookup) -> None:
     if payment is None or payment.status != PaymentStatus.COMPLETED:
         return
-    # handle_callback() already guarantees a second identical callback never
-    # reaches this point (it's a no-op against an already-terminal payment),
-    # so getting here always means "a deposit has genuinely just landed,
-    # exactly once" for this booking/order.
     business = await business_lookup(payment.business_id)
     if business is None:
         return
@@ -158,10 +153,15 @@ async def handle_mpesa_callback(session: AsyncSession, callback_body: dict, busi
     booking = await _find_booking_by_payment(session, payment.id)
     order = None if booking is not None else await _find_order_by_payment(session, payment.id)
 
-    if booking is not None:
+    if booking is not None and booking.status == BookingStatus.PENDING_DEPOSIT:
         await _process_paid_booking(session, business, booking)
-    elif order is not None:
+    elif order is not None and order.status == OrderStatus.PENDING_DEPOSIT:
         await _process_paid_order(session, business, order)
+
+
+async def handle_mpesa_callback(session: AsyncSession, callback_body: dict, business_lookup) -> None:
+    payment = await payments_module.handle_callback(session, callback_body)
+    await process_payment_completion_side_effects(session, payment, business_lookup)
 
 
 async def _process_paid_booking(session: AsyncSession, business: Business, booking: Booking) -> None:

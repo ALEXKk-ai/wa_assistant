@@ -96,10 +96,18 @@ async def _business_lookup(business_id: int):
         return await repo.get_business(session, business_id)
 
 
+from app.engine import process_payment_completion_side_effects
+
+
 async def _reconciliation_job() -> None:
     new_correlation_id()
     async with get_session() as session:
-        resolved = await reconcile_pending_payments(session, _business_lookup)
+        async def _on_completed(payment):
+            await process_payment_completion_side_effects(session, payment, _business_lookup)
+
+        resolved = await reconcile_pending_payments(
+            session, _business_lookup, on_payment_completed=_on_completed
+        )
         if resolved:
             logger.info("Reconciliation job resolved stuck payments", extra=log_extra(count=resolved))
         expired = await repo.expire_stale_pending_deposit_bookings(session)
