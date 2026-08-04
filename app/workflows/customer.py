@@ -226,7 +226,9 @@ async def handle_inbound_message(
             extra_info = business.extra_info_text or ""
             if business.deposit_percentage and business.deposit_percentage > 0:
                 dep_info = f"A {business.deposit_percentage:.0f}% deposit via M-Pesa is required for bookings to secure your slot."
-                extra_info = f"{dep_info} {extra_info}".strip() if extra_info else dep_info
+            else:
+                dep_info = "No deposit is required for bookings; customers pay when they arrive."
+            extra_info = f"{dep_info} {extra_info}".strip() if extra_info else dep_info
             intent = await ai.extract_intent(
                 customer_message=message_text,
                 business_name=business.name,
