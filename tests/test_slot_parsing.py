@@ -36,3 +36,12 @@ def test_combine_with_24h_time():
 
 def test_combine_with_bad_time_returns_none():
     assert _combine_date_and_time("25 December 2026", "not a time at all") is None
+
+
+def test_parse_next_week_weekday():
+    now = datetime.now()
+    result_this = _parse_date_text("this Thursday")
+    result_next = _parse_date_text("Thursday next week")
+    assert result_this is not None
+    assert result_next is not None
+    assert (result_next.date() - result_this.date()).days == 7

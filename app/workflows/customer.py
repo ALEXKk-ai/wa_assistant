@@ -1849,6 +1849,8 @@ def _parse_date_text(date_text: str) -> datetime | None:
     week's Thursday") will hit the cap and come back as None (unparseable)
     rather than being silently walked forward into the far future."""
     now = datetime.now()
+    lowered = date_text.lower()
+    has_next_week = "next week" in lowered
     try:
         parsed = dateutil_parser.parse(date_text, default=now.replace(microsecond=0), fuzzy=True)
     except (ValueError, OverflowError):
@@ -1860,6 +1862,9 @@ def _parse_date_text(date_text: str) -> datetime | None:
             return None
         parsed += timedelta(days=7)
         rolls += 1
+    if has_next_week and any(w in lowered for w in ("mon", "tue", "wed", "thu", "fri", "sat", "sun")):
+        if (parsed.date() - now.date()).days < 7:
+            parsed += timedelta(days=7)
     return parsed
 
 
