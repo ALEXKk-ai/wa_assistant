@@ -8,6 +8,8 @@ async def test_llm_timeout_degrades_to_fallback(monkeypatch):
         raise TimeoutError("simulated LLM timeout")
 
     monkeypatch.setattr(ai, "_call_llm", _always_times_out)
+    settings = ai.get_settings()
+    monkeypatch.setattr(settings, "gemini_api_key", "")
 
     intent = await ai.extract_intent(
         customer_message="hi do you have space tomorrow",
@@ -25,6 +27,8 @@ async def test_malformed_json_response_degrades_to_fallback(monkeypatch):
         return "this is not json at all"
 
     monkeypatch.setattr(ai, "_call_llm", _returns_garbage)
+    settings = ai.get_settings()
+    monkeypatch.setattr(settings, "gemini_api_key", "")
 
     intent = await ai.extract_intent(
         customer_message="hello",
@@ -41,6 +45,8 @@ async def test_unknown_intent_type_degrades_to_fallback(monkeypatch):
         return '{"type": "DO_SOMETHING_WEIRD", "entities": {}, "reply_text": "ok"}'
 
     monkeypatch.setattr(ai, "_call_llm", _returns_unknown_type)
+    settings = ai.get_settings()
+    monkeypatch.setattr(settings, "gemini_api_key", "")
 
     intent = await ai.extract_intent(
         customer_message="hello",

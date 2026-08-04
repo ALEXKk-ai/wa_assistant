@@ -166,7 +166,7 @@ async def extract_intent(
     if settings.gemini_api_key and settings.llm_provider != "gemini":
         try:
             logger.info("Primary LLM failed; trying secondary Gemini backup LLM")
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={settings.gemini_api_key}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={settings.gemini_api_key}"
             async with httpx.AsyncClient(timeout=settings.llm_timeout_seconds) as client:
                 resp = await client.post(
                     url,
