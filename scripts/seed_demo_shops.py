@@ -87,8 +87,8 @@ async def seed(run_init: bool = True) -> None:
         else:
             print(f"Goods shop already exists id={existing[GOODS_PHONE_ID].id}")
 
-        META_PROD_PHONE_ID = "1263634996831686"
-        PERM_TOKEN = "EAGJZBt6wwOQUBSAFS7sfdvw3pZBtjQZBjFUdDezgKSMSxVZAsfSTQDk2TMqbFvXIjcspqqi1zlNL2ak8jeBK3AW90QCQmO71Kz5tEkKzvPGuE8qtjuceNTQGdVZBsZCKBPckwNWQtYONI2SyQiwnC46Hx1fIZCaHH3eN0Ph6iCXI54VIGFaj1ckBBvVxhqnkbi8rQZDZD"
+        META_PROD_PHONE_ID = os.environ.get("WHATSAPP_PHONE_NUMBER_ID", "1263634996831686")
+        perm_token = os.environ.get("WHATSAPP_PERMANENT_TOKEN", "")
         
         meta_shop = existing.get(META_PROD_PHONE_ID)
         if not meta_shop:
@@ -96,7 +96,7 @@ async def seed(run_init: bool = True) -> None:
                 name="bloom salon",
                 business_type=BusinessType.SERVICES,
                 whatsapp_phone_number_id=META_PROD_PHONE_ID,
-                whatsapp_token_encrypted=encrypt_secret(PERM_TOKEN),
+                whatsapp_token_encrypted=encrypt_secret(perm_token) if perm_token else encrypt_secret("placeholder-token"),
                 owner_whatsapp_number="254103890536",
                 mpesa_shortcode="174379",
                 mpesa_passkey_encrypted=encrypt_secret("dev-passkey"),
@@ -110,8 +110,8 @@ async def seed(run_init: bool = True) -> None:
             session.add(meta_shop)
             await session.flush()
             print(f"Created Meta production shop id={meta_shop.id} ({meta_shop.name})")
-        else:
-            meta_shop.whatsapp_token_encrypted = encrypt_secret(PERM_TOKEN)
+        elif perm_token:
+            meta_shop.whatsapp_token_encrypted = encrypt_secret(perm_token)
             await session.flush()
             print(f"Updated Meta production shop id={meta_shop.id} ({meta_shop.name}) token")
 

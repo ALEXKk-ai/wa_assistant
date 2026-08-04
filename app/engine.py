@@ -551,7 +551,8 @@ async def _handle_booking_confirm_reject(
 
 
 async def _is_under_takeover(session: AsyncSession, business_id: int, customer_phone: str) -> bool:
-    state_row = await repo.get_conversation_state(session, business_id, customer_phone)
+    norm_phone = normalize_phone_number(customer_phone)
+    state_row = await repo.get_conversation_state(session, business_id, norm_phone)
     if state_row is None:
         return False
     state = json.loads(state_row.state_json)
@@ -559,10 +560,11 @@ async def _is_under_takeover(session: AsyncSession, business_id: int, customer_p
 
 
 async def _set_takeover(session: AsyncSession, business_id: int, customer_phone: str, value: bool) -> None:
-    state_row = await repo.get_conversation_state(session, business_id, customer_phone)
+    norm_phone = normalize_phone_number(customer_phone)
+    state_row = await repo.get_conversation_state(session, business_id, norm_phone)
     state = json.loads(state_row.state_json) if state_row else {"stage": "idle"}
     state["human_takeover"] = value
-    await repo.set_conversation_state(session, business_id, customer_phone, json.dumps(state))
+    await repo.set_conversation_state(session, business_id, norm_phone, json.dumps(state))
 
 
 async def _find_booking_by_payment(session: AsyncSession, payment_id: int) -> Booking | None:

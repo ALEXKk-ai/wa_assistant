@@ -26,6 +26,12 @@ async def test_takeover_flag_round_trips(session, business):
     assert await engine._is_under_takeover(session, business.id, "254711111111") is False
 
 
+async def test_takeover_phone_normalization(session, business):
+    await engine._set_takeover(session, business.id, "0711111111", True)
+    assert await engine._is_under_takeover(session, business.id, "254711111111") is True
+    assert await engine._is_under_takeover(session, business.id, "+254711111111") is True
+
+
 async def test_owner_takeover_command_pauses_bot_for_customer(session, business, sent_messages):
     payload = _wa_payload(business.whatsapp_phone_number_id, business.owner_whatsapp_number, "TAKEOVER 254722222222")
     await engine.handle_whatsapp_webhook(session, payload, "cb-secret")
