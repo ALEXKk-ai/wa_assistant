@@ -103,11 +103,10 @@ async def handle_whatsapp_webhook(
         if not messages:
             return  # status update / receipt, not a customer message
         message = messages[0]
-        if message.get("type") != "text":
-            return  # v1 only handles text; media/voice is a v2 concern
+        msg_type = message.get("type", "text")
         message_id = message.get("id", "")
         sender_phone = message["from"]
-        text = message["text"]["body"]
+        text = message["text"]["body"] if msg_type == "text" else f"[{msg_type.upper()} ATTACHMENT]"
         contacts = change.get("contacts") or []
         sender_name = contacts[0].get("profile", {}).get("name") if contacts else None
     except (KeyError, IndexError):
@@ -131,17 +130,56 @@ async def handle_whatsapp_webhook(
         return
 
     if normalize_phone_number(sender_phone) == normalize_phone_number(business.owner_whatsapp_number):
-        await handle_owner_command(session, business, text)
+        if msg_type == "text":
+            await handle_owner_command(session, business, text)
         return
 
     if await _is_under_takeover(session, business.id, sender_phone):
         await owner_workflow.forward_customer_message(business, sender_phone, text, customer_name=sender_name)
         return
 
+    if msg_type != "text":
+        reply_text = await handle_non_text_message(session, business, sender_phone, msg_type, customer_name=sender_name)
+        if reply_text:
+            await send_business_message(business, sender_phone, reply_text)
+        return
+
     reply_text = await customer_workflow.handle_inbound_message(
         session, business, sender_phone, text, mpesa_callback_secret, customer_name=sender_name
     )
     await send_business_message(business, sender_phone, reply_text)
+
+
+async def handle_non_text_message(
+    session: AsyncSession, business: Business, sender_phone: str, msg_type: str, customer_name: str | None = None
+) -> str | None:
+    if msg_type in ("audio", "voice"):
+        return (
+            "Hello! 👋 I can't listen to voice notes right now. "
+            "Please type out your request as a text message so I can assist you!"
+        )
+    elif msg_type == "sticker":
+        return "Thanks for the sticker! 😊 How can I help you today? Feel free to type your request or booking time."
+    elif msg_type == "image":
+        await owner_workflow.notify_owner_media_received(
+            business, sender_phone, media_type="photo", customer_name=customer_name
+        )
+        return (
+            "Thanks for sharing the photo! I've forwarded it to the shop owner, "
+            "and they will reply to you shortly."
+        )
+    elif msg_type in ("document", "video", "location"):
+        await owner_workflow.notify_owner_media_received(
+            business, sender_phone, media_type=msg_type, customer_name=customer_name
+        )
+        return (
+            f"Thanks! I've received your {msg_type} and forwarded it to the team. "
+            "They will get back to you shortly."
+        )
+    else:
+        return (
+            "Hello! 👋 I work best with text messages. Please type out your request so I can help you!"
+        )
 
 
 async def process_payment_completion_side_effects(session: AsyncSession, payment, business_lookup) -> None:

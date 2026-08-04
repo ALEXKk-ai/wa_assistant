@@ -176,6 +176,22 @@ async def notify_owner_unanswered_question(
     )
 
 
+async def notify_owner_media_received(
+    business: Business, customer_phone: str, media_type: str = "photo", customer_name: str | None = None
+) -> None:
+    """Notifies owner when a customer sends an image, document, location, or video."""
+    cust_label = _format_customer_label(customer_phone, customer_name)
+    text = (
+        f"📷 Customer {cust_label} sent a {media_type} on WhatsApp.\n\n"
+        f"Reply with: REPLY {customer_phone} <your message> to answer them directly."
+    )
+    await send_business_message(business, business.owner_whatsapp_number, text)
+    logger.info(
+        "Owner notified of customer media",
+        extra=log_extra(business_id=business.id, customer_phone=customer_phone, media_type=media_type),
+    )
+
+
 async def notify_owner_booking_cancelled(
     business: Business,
     customer_phone: str,

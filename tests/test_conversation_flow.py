@@ -299,3 +299,15 @@ async def test_resend_prompt_asks_confirmation(session, business, monkeypatch):
     reply2 = await customer_mod.handle_inbound_message(session, business, phone, "yes", "cb-secret")
     assert "sent a new M-Pesa prompt" in reply2
     assert len(stk_calls) == 2
+
+
+async def test_non_text_message_handling(session, business, sent_messages):
+    from app import engine
+    # Audio/voice note
+    res_voice = await engine.handle_non_text_message(session, business, "254711223344", "audio")
+    assert "can't listen to voice notes" in res_voice.lower()
+
+    # Image photo
+    res_image = await engine.handle_non_text_message(session, business, "254711223344", "image")
+    assert "forwarded it to the shop owner" in res_image.lower()
+    assert any("sent a photo" in text for to, text in sent_messages if to == business.owner_whatsapp_number)
