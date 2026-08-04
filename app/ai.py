@@ -188,8 +188,11 @@ async def extract_intent(
 async def _call_llm(system_prompt: str, user_message: str, settings) -> str:
     async with httpx.AsyncClient(timeout=settings.llm_timeout_seconds) as client:
         if settings.llm_provider == "gemini":
+            url = settings.llm_api_base.split("?")[0]
+            headers = {"x-goog-api-key": settings.llm_api_key}
             resp = await client.post(
-                f"{settings.llm_api_base}?key={settings.llm_api_key}",
+                url,
+                headers=headers,
                 json={
                     "contents": [
                         {"role": "user", "parts": [{"text": system_prompt + "\n\n" + user_message}]}
