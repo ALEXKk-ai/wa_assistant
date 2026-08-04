@@ -30,6 +30,12 @@ def test_parses_reject_ref():
     assert cmd.args == ["O5"]
 
 
+def test_parses_decline_ref():
+    cmd = parse_owner_command("decline B10")
+    assert cmd.name == "DECLINE"
+    assert cmd.args == ["B10"]
+
+
 def test_unrecognized_text_is_unknown():
     cmd = parse_owner_command("hey what's up")
     assert cmd.name == "UNKNOWN"

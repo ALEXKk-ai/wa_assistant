@@ -96,7 +96,7 @@ async def test_owner_reject_soft_reject_keeps_booking_and_prompts_new_time(sessi
     booking.status = BookingStatus.AWAITING_OWNER_CONFIRMATION
     await session.flush()
 
-    await engine.handle_owner_command(session, manual_business, f"REJECT B{booking.id}")
+    await engine.handle_owner_command(session, manual_business, f"DECLINE B{booking.id}")
 
     refreshed = await session.get(Booking, booking.id)
     assert refreshed.status == BookingStatus.AWAITING_OWNER_CONFIRMATION
@@ -173,7 +173,7 @@ async def test_manual_soft_reject_time_retry_without_second_deposit(session, man
     booking.status = BookingStatus.AWAITING_OWNER_CONFIRMATION
     await session.flush()
 
-    await engine.handle_owner_command(session, manual_business, f"REJECT B{booking.id}")
+    await engine.handle_owner_command(session, manual_business, f"DECLINE B{booking.id}")
 
     deposit_calls = []
 

@@ -43,7 +43,7 @@ HELP_TEXT = (
 
 @dataclass
 class OwnerCommand:
-    name: str  # "TAKEOVER" | "RELEASE" | "REPLY" | "CONFIRM" | "REJECT" | "UNKNOWN"
+    name: str  # "TAKEOVER" | "RELEASE" | "REPLY" | "CONFIRM" | "REJECT" | "DECLINE" | "UNKNOWN"
     args: list[str]
 
 
@@ -52,7 +52,7 @@ def parse_owner_command(text: str) -> OwnerCommand:
     if not parts:
         return OwnerCommand(name="UNKNOWN", args=[])
     command = parts[0].upper()
-    if command in {"TAKEOVER", "RELEASE", "REPLY", "CONFIRM", "REJECT"}:
+    if command in {"TAKEOVER", "RELEASE", "REPLY", "CONFIRM", "REJECT", "DECLINE"}:
         return OwnerCommand(name=command, args=parts[1:])
     return OwnerCommand(name="UNKNOWN", args=parts)
 
@@ -76,7 +76,7 @@ async def notify_owner_new_booking_request(
     if deposit_amount > 0:
         status_note = "Awaiting their deposit - you'll get another message once it's paid."
     elif manual:
-        status_note = f"No deposit required.\nReply CONFIRM B{booking_id} to accept, or REJECT B{booking_id} if that time won't work."
+        status_note = f"No deposit required.\nReply CONFIRM B{booking_id} to accept, DECLINE B{booking_id} to ask for another time, or REJECT B{booking_id} to cancel."
     else:
         status_note = "No deposit required (Auto-confirmed)."
 
@@ -134,7 +134,7 @@ async def notify_owner_deposit_paid(
     cust_label = _format_customer_label(customer_phone, customer_name)
     text = f"Deposit received (ref {ref}): KES {amount} from {cust_label}.\n{description}"
     if needs_manual_confirmation:
-        text += f"\n\nReply CONFIRM {ref} to confirm, or REJECT {ref} to decline."
+        text += f"\n\nReply CONFIRM {ref} to accept, DECLINE {ref} to ask for another time, or REJECT {ref} to cancel."
     await send_business_message(business, business.owner_whatsapp_number, text)
     logger.info(
         "Owner notified of deposit",

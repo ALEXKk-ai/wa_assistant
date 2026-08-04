@@ -309,20 +309,23 @@ async def handle_owner_command(session: AsyncSession, business: Business, text: 
         await send_business_message(business, customer_phone, message)
 
     elif command.name == "CONFIRM":
-        await _handle_confirm_reject(session, business, command.args, approve=True)
+        await _handle_confirm_reject(session, business, command.args, action_type="CONFIRM")
+
+    elif command.name == "DECLINE":
+        await _handle_confirm_reject(session, business, command.args, action_type="DECLINE")
 
     elif command.name == "REJECT":
-        await _handle_confirm_reject(session, business, command.args, approve=False)
+        await _handle_confirm_reject(session, business, command.args, action_type="REJECT")
 
     else:
         await owner_workflow.send_help(business)
 
 
 async def _handle_confirm_reject(
-    session: AsyncSession, business: Business, args: list[str], approve: bool
+    session: AsyncSession, business: Business, args: list[str], action_type: str = "CONFIRM"
 ) -> None:
     if not args:
-        await owner_workflow.send_ack(business, "Usage: CONFIRM B<id> or CONFIRM O<id> (or REJECT)")
+        await owner_workflow.send_ack(business, "Usage: CONFIRM B<id>, DECLINE B<id>, or REJECT B<id>")
         return
     ref = args[0].strip().upper()
     if len(ref) < 2 or ref[0] not in ("B", "O") or not ref[1:].isdigit():
@@ -330,12 +333,13 @@ async def _handle_confirm_reject(
         return
 
     entity_id = int(ref[1:])
+    approve = (action_type == "CONFIRM")
     if ref[0] == "B":
         booking = await repo.get_booking_for_business(session, business.id, entity_id)
         if booking is None:
             await owner_workflow.send_ack(business, f"No booking {ref} found.")
             return
-        await _handle_booking_confirm_reject(session, business, booking, ref, approve)
+        await _handle_booking_confirm_reject(session, business, booking, ref, action_type=action_type)
         return
 
     else:  # "O"
@@ -382,12 +386,14 @@ async def _booking_deposit_completed(session: AsyncSession, booking: Booking) ->
 
 
 async def _handle_booking_confirm_reject(
-    session: AsyncSession, business: Business, booking: Booking, ref: str, approve: bool
+    session: AsyncSession, business: Business, booking: Booking, ref: str, action_type: str = "CONFIRM"
 ) -> None:
     manual = business.confirmation_mode == ConfirmationMode.MANUAL
     customer = await session.get(Customer, booking.customer_id)
     service = await repo.get_service_for_business(session, business.id, booking.service_id)
     service_name = service.name if service else "your booking"
+
+    approve = (action_type == "CONFIRM")
 
     if booking.status == BookingStatus.AWAITING_RESCHEDULE_CONFIRMATION:
         if booking.proposed_slot_start is None:
@@ -457,16 +463,17 @@ async def _handle_booking_confirm_reject(
         await owner_workflow.send_ack(business, f"{ref} confirmed.")
         return
 
-    # Reject
     deposit_paid = await _booking_deposit_completed(session, booking)
-    if manual and deposit_paid:
+
+    # DECLINE or (REJECT on manual mode with paid deposit) -> Soft Reject (Ask customer for new time)
+    if action_type == "DECLINE" or (manual and deposit_paid and action_type != "REJECT"):
+        dep_note = " - your deposit is still on this booking." if deposit_paid else "."
         if customer:
             await send_business_message(
                 business,
                 customer.phone_number,
                 f"Your {service_name} booking couldn't be confirmed for "
-                f"{booking.slot_start:%d %b %Y at %H:%M}. Please choose another date and time - "
-                "your deposit is still on this booking.",
+                f"{booking.slot_start:%d %b %Y at %H:%M}. Please choose another date and time{dep_note}",
             )
             await customer_workflow.seed_booking_time_retry(
                 session,
