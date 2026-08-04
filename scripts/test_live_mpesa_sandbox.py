@@ -39,16 +39,16 @@ async def main():
                 owner_whatsapp_number="254103890536",
                 mpesa_shortcode="174379",
                 mpesa_passkey_encrypted=encrypt_secret("bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919"),
-                mpesa_consumer_key_encrypted=encrypt_secret("Z7UdM0bHvqVRV6WICRT6oLXzgtCMDbsWxLbTUn2drcZIPsWu"),
-                mpesa_consumer_secret_encrypted=encrypt_secret("odG2TYC4nMRrz9LixCDdU07BuLf5nNApolrmSDeUs32sZUpAFGVom1PJPcAIDKOE"),
+                mpesa_consumer_key_encrypted=encrypt_secret("Z7UdM0bHvqVRV6WlCRT6oLXzgtCMDbsWxLbTUn2drcZlPsWu"),
+                mpesa_consumer_secret_encrypted=encrypt_secret("odG2TYC4nMRrz9LixCDdU07BuLf5nNApoIrmSDeUs32sZUpAFGVom1PJPcAIDK0E"),
                 deposit_percentage=20,
                 confirmation_mode=ConfirmationMode.AUTOMATIC,
             )
             session.add(business)
             await session.flush()
         else:
-            business.mpesa_consumer_key_encrypted = encrypt_secret("Z7UdM0bHvqVRV6WICRT6oLXzgtCMDbsWxLbTUn2drcZIPsWu")
-            business.mpesa_consumer_secret_encrypted = encrypt_secret("odG2TYC4nMRrz9LixCDdU07BuLf5nNApolrmSDeUs32sZUpAFGVom1PJPcAIDKOE")
+            business.mpesa_consumer_key_encrypted = encrypt_secret("Z7UdM0bHvqVRV6WlCRT6oLXzgtCMDbsWxLbTUn2drcZlPsWu")
+            business.mpesa_consumer_secret_encrypted = encrypt_secret("odG2TYC4nMRrz9LixCDdU07BuLf5nNApoIrmSDeUs32sZUpAFGVom1PJPcAIDK0E")
             business.mpesa_passkey_encrypted = encrypt_secret("bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919")
             await session.flush()
 

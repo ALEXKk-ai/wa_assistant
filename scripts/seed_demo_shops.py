@@ -101,8 +101,8 @@ async def seed(run_init: bool = True) -> None:
                 owner_whatsapp_number=os.environ.get("OWNER_WHATSAPP_NUMBER", "254103890536"),
                 mpesa_shortcode=os.environ.get("MPESA_SHORTCODE", "174379"),
                 mpesa_passkey_encrypted=encrypt_secret(os.environ.get("MPESA_PASSKEY", "bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919")),
-                mpesa_consumer_key_encrypted=encrypt_secret(os.environ.get("MPESA_CONSUMER_KEY", "Z7UdM0bHvqVRV6WICRT6oLXzgtCMDbsWxLbTUn2drcZIPsWu")),
-                mpesa_consumer_secret_encrypted=encrypt_secret(os.environ.get("MPESA_CONSUMER_SECRET", "odG2TYC4nMRrz9LixCDdU07BuLf5nNApolrmSDeUs32sZUpAFGVom1PJPcAIDKOE")),
+                mpesa_consumer_key_encrypted=encrypt_secret(os.environ.get("MPESA_CONSUMER_KEY", "Z7UdM0bHvqVRV6WlCRT6oLXzgtCMDbsWxLbTUn2drcZlPsWu")),
+                mpesa_consumer_secret_encrypted=encrypt_secret(os.environ.get("MPESA_CONSUMER_SECRET", "odG2TYC4nMRrz9LixCDdU07BuLf5nNApoIrmSDeUs32sZUpAFGVom1PJPcAIDK0E")),
                 deposit_percentage=20,
                 confirmation_mode=ConfirmationMode.AUTOMATIC,
                 hours_json=json.dumps(hours),
@@ -112,8 +112,8 @@ async def seed(run_init: bool = True) -> None:
             await session.flush()
             print(f"Created Meta production shop id={meta_shop.id} ({meta_shop.name})")
         else:
-            meta_shop.mpesa_consumer_key_encrypted = encrypt_secret(os.environ.get("MPESA_CONSUMER_KEY", "Z7UdM0bHvqVRV6WICRT6oLXzgtCMDbsWxLbTUn2drcZIPsWu"))
-            meta_shop.mpesa_consumer_secret_encrypted = encrypt_secret(os.environ.get("MPESA_CONSUMER_SECRET", "odG2TYC4nMRrz9LixCDdU07BuLf5nNApolrmSDeUs32sZUpAFGVom1PJPcAIDKOE"))
+            meta_shop.mpesa_consumer_key_encrypted = encrypt_secret(os.environ.get("MPESA_CONSUMER_KEY", "Z7UdM0bHvqVRV6WlCRT6oLXzgtCMDbsWxLbTUn2drcZlPsWu"))
+            meta_shop.mpesa_consumer_secret_encrypted = encrypt_secret(os.environ.get("MPESA_CONSUMER_SECRET", "odG2TYC4nMRrz9LixCDdU07BuLf5nNApoIrmSDeUs32sZUpAFGVom1PJPcAIDK0E"))
             meta_shop.mpesa_passkey_encrypted = encrypt_secret(os.environ.get("MPESA_PASSKEY", "bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919"))
             if perm_token:
                 meta_shop.whatsapp_token_encrypted = encrypt_secret(perm_token)
