@@ -89,11 +89,11 @@ _CODE_REQUEST_RE = re.compile(
     re.IGNORECASE,
 )
 _OFFER_RE = re.compile(
-    r"\b(?:do\s+you|can\s+i|can\s+we)\s+(?:offer|have|do|get|provide)\s+(?P<item>.+?)[?.!]*$",
+    r"\b(?:do\s+you|can\s+i|can\s+we)\s+(?:offer|have|do|get|provide|bring)\s+(?P<item>.+?)(?:\s+(?:in|at|for|there)\b|[?.!]|$)",
     re.IGNORECASE,
 )
 _AVAILABLE_RE = re.compile(
-    r"\b(?:is|are)\s+(?P<item>.+?)\s+(?:available|offered)[?.!]*$",
+    r"\b(?:is|are)\s+(?:there\s+)?(?P<item>.+?)(?:\s+available|\s+offered|\s+there|\s+in\b|\s+at\b|\s+for\b|[?.!]|$)",
     re.IGNORECASE,
 )
 _PRICE_ITEM_RE = re.compile(
@@ -585,6 +585,8 @@ async def _direct_catalog_availability_reply(
 def _extract_catalog_item_question(message_text: str) -> str | None:
     text = message_text.strip()
     lowered = text.lower()
+    if any(word in lowered for word in ("hours", "address", "location", "located", "open", "close", "operating")):
+        return None
     if "what" in lowered and ("offer" in lowered or "have" in lowered or "available" in lowered):
         return None
 
@@ -675,6 +677,11 @@ _OWNER_AUTHORITY_ACTS = {
     ai.ConversationAct.PROPOSAL,
 }
 
+_EXPLICIT_HUMAN_REQUEST_RE = re.compile(
+    r"\b(discount|negotiate|cheaper|refund|complaint|bad|horrible|unhappy|manager|human|person|owner|proposal|partnership|commercial|arrangement|supply|bulk|b2b|collaborat|bring\s+my\s+own|after\s+hours)\b",
+    re.IGNORECASE,
+)
+
 
 async def _pre_route_conversation_act(
     session: AsyncSession,
@@ -696,6 +703,19 @@ async def _pre_route_conversation_act(
             direct_reply = await _direct_catalog_availability_reply(session, business, message_text)
             if direct_reply is not None:
                 return direct_reply, stage, pending
+
+        if not _EXPLICIT_HUMAN_REQUEST_RE.search(message_text):
+            if business.business_type == BusinessType.SERVICES:
+                return (
+                    f"I don't have specific details on that right now, but I can help you with our listed services, operating hours, location, and bookings!\n\n{await _list_services_text(session, business)}",
+                    stage,
+                    pending,
+                )
+            return (
+                f"I don't have specific details on that right now, but I can help you with our listed products, operating hours, location, and orders!\n\n{await _list_products_text(session, business)}",
+                stage,
+                pending,
+            )
 
         await owner_workflow.notify_owner_unanswered_question(
             business, customer_phone, message_text, customer_name=customer.name
