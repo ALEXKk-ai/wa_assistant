@@ -133,6 +133,27 @@ async def add_product(args) -> None:
         print(f"Added product id={product.id} to business_id={args.business_id}")
 
 
+async def update_business_mpesa(args) -> None:
+    from sqlalchemy import select
+    await init_db()
+    async with get_session() as session:
+        result = await session.execute(select(Business).where(Business.id == args.business_id))
+        business = result.scalars().first()
+        if not business:
+            print(f"Business id={args.business_id} not found.")
+            return
+        if args.mpesa_shortcode is not None:
+            business.mpesa_shortcode = args.mpesa_shortcode
+        if args.mpesa_consumer_key:
+            business.mpesa_consumer_key_encrypted = encrypt_secret(args.mpesa_consumer_key)
+        if args.mpesa_consumer_secret:
+            business.mpesa_consumer_secret_encrypted = encrypt_secret(args.mpesa_consumer_secret)
+        if args.mpesa_passkey:
+            business.mpesa_passkey_encrypted = encrypt_secret(args.mpesa_passkey)
+        await session.commit()
+        print(f"Updated M-Pesa credentials for business id={business.id} ({business.name})")
+
+
 async def list_businesses(args) -> None:
     from sqlalchemy import select
 
@@ -214,6 +235,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--price", type=float, required=True)
     p.add_argument("--stock", type=int, required=True)
     p.set_defaults(func=add_product)
+
+    p = sub.add_parser("update-business-mpesa")
+    p.add_argument("--business-id", type=int, required=True)
+    p.add_argument("--mpesa-shortcode")
+    p.add_argument("--mpesa-consumer-key")
+    p.add_argument("--mpesa-consumer-secret")
+    p.add_argument("--mpesa-passkey")
+    p.set_defaults(func=update_business_mpesa)
 
     p = sub.add_parser("list-businesses")
     p.set_defaults(func=list_businesses)
