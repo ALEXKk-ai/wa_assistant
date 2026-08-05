@@ -112,6 +112,7 @@ async def seed(run_init: bool = True) -> None:
             await session.flush()
             print(f"Created Meta production shop id={meta_shop.id} ({meta_shop.name})")
         else:
+            meta_shop.business_type = BusinessType.SERVICES
             if os.environ.get("OWNER_WHATSAPP_NUMBER"):
                 meta_shop.owner_whatsapp_number = os.environ["OWNER_WHATSAPP_NUMBER"]
             elif not meta_shop.owner_whatsapp_number:

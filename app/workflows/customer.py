@@ -253,6 +253,18 @@ async def handle_inbound_message(
                 business_extra_info=extra_info or "none",
                 fulfillment_policy=getattr(business.fulfillment_mode, "value", "both"),
             )
+            if intent.type == ai.IntentType.FALLBACK:
+                lowered = message_text.lower()
+                if stage == STAGE_IDLE and re.search(r"\b(book|appointment|reserve)\b", lowered):
+                    if not any(w in lowered for w in ("cancel", "reschedule", "status", "check", "my booking", "my bookings", "existing booking")):
+                        entities = {}
+                        date_text = _extract_date_text(message_text, pending)
+                        time_text = _extract_time_text(message_text, pending, business)
+                        if date_text:
+                            entities["date_text"] = date_text
+                        if time_text:
+                            entities["time_text"] = time_text
+                        intent = ai.Intent(type=ai.IntentType.BOOK_SERVICE, entities=entities)
         else:
             logger.info(
                 "Intent classified deterministically",
@@ -646,6 +658,7 @@ def _find_named_item(requested: str, names: list[str]) -> str | None:
 def _deterministic_intent(
     message_text: str, stage: str, pending: dict, business: Business
 ) -> ai.Intent | None:
+    lowered = message_text.lower()
     if _CODE_REQUEST_RE.search(message_text):
         return ai.Intent(
             type=ai.IntentType.OFF_TOPIC,
@@ -874,7 +887,19 @@ def _extract_time_text(message_text: str, pending: dict, business: Business) -> 
     if match:
         return f"{int(match.group('hour')):02d}:{match.group('minute')}"
 
-    return _infer_bare_time_text(text, pending, business)
+    bare = _infer_bare_time_text(text, pending, business)
+    if bare is not None:
+        return bare
+
+    lowered = text.lower()
+    if "morning" in lowered:
+        return "09:00"
+    if "afternoon" in lowered:
+        return "14:00"
+    if "evening" in lowered:
+        return "17:00"
+
+    return None
 
 
 def _infer_bare_time_text(message_text: str, pending: dict, business: Business) -> str | None:
@@ -942,11 +967,15 @@ async def _dispatch(
         if intent.type == ai.IntentType.LIST_SERVICES:
             reply = await _list_services_text(session, business)
             return reply, stage, pending
-        if intent.type == ai.IntentType.BUY_PRODUCT:
+        if intent.type in (ai.IntentType.BOOK_SERVICE, ai.IntentType.BUY_PRODUCT):
+            if pending.get("type") == "reschedule_booking":
+                return await _advance_reschedule(session, business, pending, intent.entities)
+            if pending.get("type") == "booking_time_retry":
+                return await _advance_booking_time_retry(session, business, pending, intent.entities)
             entities = dict(intent.entities)
-            if entities.get("product_name") and not entities.get("service_name"):
-                entities["service_name"] = entities["product_name"]
-            return await _advance_booking(session, business, pending, entities)
+            if not entities.get("service_name"):
+                entities["service_name"] = entities.get("product_name")
+            return await _advance_booking(session, business, pending, entities, message_text=message_text)
 
     if business.business_type == BusinessType.GOODS:
         if intent.type == ai.IntentType.LIST_SERVICES:
@@ -956,10 +985,10 @@ async def _dispatch(
         if intent.type == ai.IntentType.LIST_PRODUCTS:
             reply = await _list_products_text(session, business)
             return reply, stage, pending
-        if intent.type == ai.IntentType.BOOK_SERVICE:
+        if intent.type in (ai.IntentType.BOOK_SERVICE, ai.IntentType.BUY_PRODUCT):
             entities = dict(intent.entities)
-            if entities.get("service_name") and not entities.get("product_name"):
-                entities["product_name"] = entities["service_name"]
+            if not entities.get("product_name"):
+                entities["product_name"] = entities.get("service_name")
             return await _advance_order(session, business, pending, entities)
 
     if intent.type == ai.IntentType.LIST_SERVICES:
@@ -982,7 +1011,7 @@ async def _dispatch(
             return await _advance_reschedule(session, business, pending, intent.entities)
         if pending.get("type") == "booking_time_retry":
             return await _advance_booking_time_retry(session, business, pending, intent.entities)
-        return await _advance_booking(session, business, pending, intent.entities)
+        return await _advance_booking(session, business, pending, intent.entities, message_text=message_text)
 
     if intent.type == ai.IntentType.BUY_PRODUCT:
         return await _advance_order(session, business, pending, intent.entities)
@@ -1222,7 +1251,13 @@ def _validate_slot(business: Business, slot_start: datetime, slot_end: datetime)
     return None if ok else msg
 
 
-async def _advance_booking(session: AsyncSession, business: Business, pending: dict, entities: dict):
+async def _advance_booking(
+    session: AsyncSession,
+    business: Business,
+    pending: dict,
+    entities: dict,
+    message_text: str = "",
+):
     pending = _merge_entities(pending, entities, ["service_name", "date_text", "time_text", "payment_phone"])
     pending["type"] = "booking"
 
@@ -1237,6 +1272,14 @@ async def _advance_booking(session: AsyncSession, business: Business, pending: d
             service = next((s for s in services if name in s.name.lower()), None)
         if service is not None:
             pending["service_id"] = service.id
+
+    if service is None:
+        for s in services:
+            if s.name.lower() in (message_text or "").lower():
+                service = s
+                pending["service_id"] = s.id
+                pending["service_name"] = s.name
+                break
 
     if service is None:
         if pending.get("service_name"):
