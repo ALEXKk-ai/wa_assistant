@@ -215,15 +215,7 @@ async def handle_inbound_message(
     if direct_reply is None:
         direct_reply = await _direct_pending_booking_reference_reply(session, business, customer, message_text)
     if direct_reply is None:
-        direct_reply = await _direct_deposit_info_reply(session, business, message_text)
-    if direct_reply is None:
         direct_reply = await _direct_catalog_availability_reply(session, business, message_text)
-    if direct_reply is None:
-        direct_reply = _direct_location_reply(business, message_text)
-    if direct_reply is None:
-        direct_reply = _direct_hours_reply(business, message_text)
-    if direct_reply is None:
-        direct_reply = _direct_payment_methods_reply(business, message_text)
 
     if direct_reply is not None:
         if isinstance(direct_reply, tuple):
@@ -1263,13 +1255,18 @@ async def _advance_booking(
 
     services = await repo.list_services(session, business.id)
     service = None
+    if pending.get("service_name") and pending.get("service_id"):
+        svc = next((s for s in services if s.id == pending["service_id"]), None)
+        if svc and pending["service_name"].strip().lower() != svc.name.strip().lower() and svc.name.strip().lower() not in pending["service_name"].strip().lower():
+            pending["service_id"] = None
+
     if pending.get("service_id"):
         service = next((s for s in services if s.id == pending["service_id"]), None)
     if service is None and pending.get("service_name"):
         name = pending["service_name"].strip().lower()
         service = next((s for s in services if s.name.strip().lower() == name), None)
         if service is None:
-            service = next((s for s in services if name in s.name.lower()), None)
+            service = next((s for s in services if name in s.name.lower() or s.name.lower() in name), None)
         if service is not None:
             pending["service_id"] = service.id
 
@@ -1283,7 +1280,7 @@ async def _advance_booking(
 
     if service is None:
         if pending.get("service_name"):
-            reply = "I couldn't find that service. " + await _list_services_text(session, business)
+            reply = f"We don't offer '{pending['service_name'].title()}' at {business.name}. " + await _list_services_text(session, business, header="Here are the services we offer:")
         else:
             reply = "Sure - which service would you like to book?"
         return reply, STAGE_COLLECTING_BOOKING, pending
