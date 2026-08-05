@@ -112,14 +112,17 @@ async def seed(run_init: bool = True) -> None:
             await session.flush()
             print(f"Created Meta production shop id={meta_shop.id} ({meta_shop.name})")
         else:
-            meta_shop.owner_whatsapp_number = os.environ.get("OWNER_WHATSAPP_NUMBER", "254706832905")
+            if os.environ.get("OWNER_WHATSAPP_NUMBER"):
+                meta_shop.owner_whatsapp_number = os.environ["OWNER_WHATSAPP_NUMBER"]
+            elif not meta_shop.owner_whatsapp_number:
+                meta_shop.owner_whatsapp_number = "254706832905"
             meta_shop.mpesa_consumer_key_encrypted = encrypt_secret(os.environ.get("MPESA_CONSUMER_KEY", "Z7UdM0bHvqVRV6WlCRT6oLXzgtCMDbsWxLbTUn2drcZlPsWu"))
             meta_shop.mpesa_consumer_secret_encrypted = encrypt_secret(os.environ.get("MPESA_CONSUMER_SECRET", "odG2TYC4nMRrz9LixCDdU07BuLf5nNApoIrmSDeUs32sZUpAFGVom1PJPcAIDK0E"))
             meta_shop.mpesa_passkey_encrypted = encrypt_secret(os.environ.get("MPESA_PASSKEY", "bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919"))
             if perm_token:
                 meta_shop.whatsapp_token_encrypted = encrypt_secret(perm_token)
             await session.flush()
-            print(f"Updated Meta production shop id={meta_shop.id} ({meta_shop.name}) token and owner phone")
+            print(f"Updated Meta production shop id={meta_shop.id} ({meta_shop.name}) credentials")
 
         # Ensure services exist for meta_shop
         existing_srvs = (await session.execute(select(Service).where(Service.business_id == meta_shop.id))).scalars().all()
