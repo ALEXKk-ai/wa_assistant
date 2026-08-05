@@ -620,7 +620,7 @@ async def _direct_catalog_availability_reply(
 def _extract_catalog_item_question(message_text: str) -> str | None:
     text = message_text.strip()
     lowered = text.lower()
-    if any(word in lowered for word in ("hours", "address", "location", "located", "open", "close", "operating", "deposit", "payment", "paid")):
+    if any(word in lowered for word in ("hours", "address", "location", "located", "open", "close", "operating", "deposit", "payment", "paid", "wrong with", "you stupid", "are you", "wtf", "fool", "dumb", "idiot")):
         return None
     if "what" in lowered and ("offer" in lowered or "have" in lowered or "available" in lowered):
         return None

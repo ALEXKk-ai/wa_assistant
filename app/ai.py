@@ -124,6 +124,7 @@ in progress, analyze the customer's message and respond ONLY with JSON matching 
 "reply_text": "<natural, friendly reply to send the customer, used for ASK_INFO, LIST_SERVICES, LIST_PRODUCTS, CHECK_STATUS, OFF_TOPIC, and general chat>"}}
 
 Rules for classification:
+- type MUST BE EXACTLY ONE OF: ASK_INFO, LIST_SERVICES, LIST_PRODUCTS, BOOK_SERVICE, BUY_PRODUCT, CHECK_STATUS, CANCEL_BOOKING, CANCEL_ORDER, RESCHEDULE_BOOKING, CONFIRM_ACTION, CANCEL_ACTION, OUT_OF_SCOPE, OFF_TOPIC. Do not use COMPLAINT as type; use OUT_OF_SCOPE for complaints and set conversation_act to COMPLAINT.
 - BOOK_SERVICE / BUY_PRODUCT: Use when the customer mentions wanting a service or product, OR names a specific item listed in the catalog (e.g. "braiding", "haircut"), OR gives a date/time/quantity for an in-progress booking/order. Set service_name or product_name to the catalog item mentioned.
 - fulfillment_type: "delivery" or "pickup" if the customer specifies wanting delivery vs store pickup in THIS message, else null.
 - delivery_address: street address / location / landmark if customer provides a delivery address in THIS message, else null.
@@ -137,7 +138,7 @@ Rules for classification:
 - CANCEL_ACTION: Customer wants to abandon an in-progress draft action ("nevermind", "stop").
 - conversation_act captures what the message is doing socially: thanks/bye = ACKNOWLEDGEMENT/CLOSING, "I might not make it tomorrow" = UNCERTAIN_ATTENDANCE, "no, I meant 3pm" = CORRECTION, complaints = COMPLAINT, requests for a person = HUMAN_REQUEST, business partnership/wholesale/sponsorship proposals = PROPOSAL.
 - authority_route should be OWNER_AUTHORITY_REQUIRED only when the customer asks for something requiring explicit owner/manager decision (proposal, partnership, complaint, custom discount negotiation, refund exception, explicit request for human manager/owner). Keep general business questions, deposit inquiries, operating hours, location, amenities, and catalog availability questions as NORMAL.
-- OUT_OF_SCOPE: Use for business inquiries that require explicit human owner escalation (custom price negotiation, complaints, manager requests, custom policy exceptions).
+- OUT_OF_SCOPE: Use for complaints, frustrations, insults, business inquiries that require explicit human owner escalation (custom price negotiation, manager requests, custom policy exceptions).
 - OFF_TOPIC: Use for completely irrelevant, non-business queries (e.g. writing code, weather, recipes, general trivia). Provide a polite assistant boundary in reply_text (e.g. "I'm the virtual assistant for {business_name}! I can only assist with our listed services, bookings, products, and operating hours..."). Do NOT notify the shop owner for OFF_TOPIC.
 - ASK_INFO / LIST_SERVICES / LIST_PRODUCTS: Answer questions using the catalog, operating hours, address, deposit policy, and extra info provided below. Use reply_text to provide a warm, helpful, natural response to questions about location, parking, deposit amounts, policies, hours, prices, or services. If asking about a service/product not listed in the catalog, inform the customer warmly about what is available.
 
