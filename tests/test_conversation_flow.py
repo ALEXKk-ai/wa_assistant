@@ -311,6 +311,30 @@ async def test_owner_authority_route_escalates_even_with_ai_reply_text(session, 
     assert any(question in t for t in owner_msgs)
 
 
+async def test_owner_authority_route_does_not_require_regex_keyword(session, business, monkeypatch, sent_messages):
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(
+                type=ai.IntentType.ASK_INFO,
+                conversation_act=ai.ConversationAct.HUMAN_REQUEST,
+                authority_route=ai.AuthorityRoute.OWNER_AUTHORITY_REQUIRED,
+                entities={},
+                reply_text="I can make that happen.",
+            )
+        ],
+    )
+
+    phone = "254711116672"
+    question = "Could someone review my situation from yesterday?"
+    reply = await customer_mod.handle_inbound_message(session, business, phone, question, "cb-secret")
+
+    assert "passed" in reply.lower() or "team" in reply.lower()
+    assert "make that happen" not in reply.lower()
+    owner_msgs = [t for to, t in sent_messages if to == business.owner_whatsapp_number]
+    assert any(question in t for t in owner_msgs)
+
+
 async def test_cancel_clears_pending_state(session, business, monkeypatch, sent_messages):
     await _add_haircut(session, business)
 

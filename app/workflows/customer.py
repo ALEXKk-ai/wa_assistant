@@ -737,19 +737,6 @@ async def _pre_route_conversation_act(
         intent.authority_route == ai.AuthorityRoute.OWNER_AUTHORITY_REQUIRED
         or act in _OWNER_AUTHORITY_ACTS
     ):
-        if not _EXPLICIT_HUMAN_REQUEST_RE.search(message_text):
-            if business.business_type == BusinessType.SERVICES:
-                return (
-                    f"I don't have specific details on that right now, but I can help you with our listed services, operating hours, location, and bookings!\n\n{await _list_services_text(session, business)}",
-                    stage,
-                    pending,
-                )
-            return (
-                f"I don't have specific details on that right now, but I can help you with our listed products, operating hours, location, and orders!\n\n{await _list_products_text(session, business)}",
-                stage,
-                pending,
-            )
-
         await owner_workflow.notify_owner_unanswered_question(
             business, customer_phone, message_text, customer_name=customer.name
         )
