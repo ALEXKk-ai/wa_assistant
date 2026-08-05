@@ -288,7 +288,11 @@ async def _direct_payment_status_reply(
     is_status_query = bool(_PAYMENT_STATUS_RE.search(message_text))
     wants_resend = any(
         phrase in lowered
-        for phrase in ("resend", "send again", "prompt again", "retry", "didnt get", "didn't get", "another prompt", "new prompt")
+        for phrase in (
+            "resend", "send again", "prompt again", "retry", "didnt get", "didn't get",
+            "another prompt", "new prompt", "stk push", "stk", "prompt", "push",
+            "popup", "pop up", "send prompt", "send push"
+        )
     )
     if not is_status_query and not wants_resend:
         return None
@@ -715,6 +719,18 @@ def _infer_bare_time_text(message_text: str, pending: dict, business: Business) 
     return f"{hour:02d}:{minute:02d}"
 
 
+def _is_valid_kenyan_phone(digits: str) -> bool:
+    if not digits:
+        return False
+    if digits.startswith("0") and len(digits) == 10:
+        return True
+    if digits.startswith("254") and len(digits) == 12:
+        return True
+    if (digits.startswith("7") or digits.startswith("1")) and len(digits) == 9:
+        return True
+    return False
+
+
 async def _dispatch(
     session, business, customer, customer_phone, message_text, intent, stage, pending, mpesa_callback_secret, history=None
 ) -> tuple[str, str, dict]:
@@ -801,10 +817,19 @@ async def _dispatch(
             return "Rescheduling isn't available for orders - please contact us directly.", STAGE_IDLE, {}
         return await _start_reschedule_booking(session, business, customer)
 
+
+
+
     digits_in_msg = "".join(c for c in message_text if c.isdigit())
     if intent.type == ai.IntentType.CONFIRM_ACTION or (stage == STAGE_CONFIRMING and len(digits_in_msg) >= 9):
         if stage == STAGE_CONFIRMING and pending:
             if len(digits_in_msg) >= 9:
+                if not _is_valid_kenyan_phone(digits_in_msg):
+                    return (
+                        "That phone number looks invalid — please reply with a valid 10-digit M-Pesa phone number (e.g. 0712345678) or reply YES to use your main number.",
+                        STAGE_CONFIRMING,
+                        pending,
+                    )
                 pending["payment_phone"] = digits_in_msg
             reply = await _finalize_pending_action(
                 session, business, customer, customer_phone, pending, mpesa_callback_secret
