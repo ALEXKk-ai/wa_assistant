@@ -183,73 +183,53 @@ async def handle_inbound_message(
 
     history.append({"role": "customer", "text": message_text})
 
-    direct_reply = _direct_greeting_reply(business, message_text, stage, pending)
-    if direct_reply is None:
-        direct_reply = await _direct_payment_status_reply(
-            session, business, customer, message_text, mpesa_callback_secret=mpesa_callback_secret
-        )
-
-    if direct_reply is None:
-        direct_reply = await _direct_pending_booking_reference_reply(session, business, customer, message_text)
-
-    if direct_reply is not None:
-        if isinstance(direct_reply, tuple):
-            reply_text, new_stage, new_pending = direct_reply
-        else:
-            reply_text, new_stage, new_pending = direct_reply, stage, pending
+    catalog = await _build_catalog_summary(session, business)
+    hours = json.loads(business.hours_json or "{}")
+    extra_info = business.extra_info_text or ""
+    if business.deposit_percentage and business.deposit_percentage > 0:
+        dep_info = f"A {business.deposit_percentage:.0f}% deposit via M-Pesa is required for bookings to secure your slot."
     else:
-        intent = _deterministic_intent(message_text, stage, pending, business)
-        if intent is None:
-            catalog = await _build_catalog_summary(session, business)
-            hours = json.loads(business.hours_json or "{}")
-            extra_info = business.extra_info_text or ""
-            if business.deposit_percentage and business.deposit_percentage > 0:
-                dep_info = f"A {business.deposit_percentage:.0f}% deposit via M-Pesa is required for bookings to secure your slot."
-            else:
-                dep_info = "No deposit is required for bookings; customers pay when they arrive."
-            extra_info = f"{dep_info} {extra_info}".strip() if extra_info else dep_info
-            intent = await ai.extract_intent(
-                customer_message=message_text,
-                business_name=business.name,
-                business_type=business.business_type.value,
-                catalog=catalog,
-                conversation_history=history[:-1],
-                pending=pending,
-                business_hours_text=hours_mod.format_hours(hours),
-                business_address=business.address_text or "not listed",
-                business_extra_info=extra_info or "none",
-                fulfillment_policy=getattr(business.fulfillment_mode, "value", "both"),
-            )
-            if intent.type == ai.IntentType.FALLBACK:
-                lowered = message_text.lower()
-                if stage == STAGE_IDLE and re.search(r"\b(book|appointment|reserve)\b", lowered):
-                    if not any(w in lowered for w in ("cancel", "reschedule", "status", "check", "my booking", "my bookings", "existing booking")):
-                        entities = {}
-                        date_text = _extract_date_text(message_text, pending)
-                        time_text = _extract_time_text(message_text, pending, business)
-                        if date_text:
-                            entities["date_text"] = date_text
-                        if time_text:
-                            entities["time_text"] = time_text
-                        intent = ai.Intent(type=ai.IntentType.BOOK_SERVICE, entities=entities)
-        else:
-            logger.info(
-                "Intent classified deterministically",
-                extra=log_extra(business_id=business.id, intent=intent.type.value, stage=stage),
-            )
-        logger.info(
-            "Intent classified",
-            extra=log_extra(business_id=business.id, intent=intent.type.value, stage=stage),
+        dep_info = "No deposit is required for bookings; customers pay when they arrive."
+    extra_info = f"{dep_info} {extra_info}".strip() if extra_info else dep_info
+
+    intent = await ai.extract_intent(
+        customer_message=message_text,
+        business_name=business.name,
+        business_type=business.business_type.value,
+        catalog=catalog,
+        conversation_history=history[:-1],
+        pending=pending,
+        business_hours_text=hours_mod.format_hours(hours),
+        business_address=business.address_text or "not listed",
+        business_extra_info=extra_info or "none",
+        fulfillment_policy=getattr(business.fulfillment_mode, "value", "both"),
+    )
+    if intent.type == ai.IntentType.FALLBACK:
+        lowered = message_text.lower()
+        if stage == STAGE_IDLE and re.search(r"\b(book|appointment|reserve)\b", lowered):
+            if not any(w in lowered for w in ("cancel", "reschedule", "status", "check", "my booking", "my bookings", "existing booking")):
+                entities = {}
+                date_text = _extract_date_text(message_text, pending)
+                time_text = _extract_time_text(message_text, pending, business)
+                if date_text:
+                    entities["date_text"] = date_text
+                if time_text:
+                    entities["time_text"] = time_text
+                intent = ai.Intent(type=ai.IntentType.BOOK_SERVICE, entities=entities)
+
+    logger.info(
+        "Intent classified",
+        extra=log_extra(business_id=business.id, intent=intent.type.value, stage=stage),
+    )
+    pre_routed = await _pre_route_conversation_act(
+        session, business, customer, customer_phone, message_text, intent, stage, pending
+    )
+    if pre_routed is not None:
+        reply_text, new_stage, new_pending = pre_routed
+    else:
+        reply_text, new_stage, new_pending = await _dispatch(
+            session, business, customer, customer_phone, message_text, intent, stage, pending, mpesa_callback_secret, history
         )
-        pre_routed = await _pre_route_conversation_act(
-            session, business, customer, customer_phone, message_text, intent, stage, pending
-        )
-        if pre_routed is not None:
-            reply_text, new_stage, new_pending = pre_routed
-        else:
-            reply_text, new_stage, new_pending = await _dispatch(
-                session, business, customer, customer_phone, message_text, intent, stage, pending, mpesa_callback_secret, history
-            )
 
     history.append({"role": "bot", "text": reply_text})
     history = history[-MAX_HISTORY_ENTRIES:]
@@ -261,115 +241,6 @@ async def handle_inbound_message(
         json.dumps({"stage": new_stage, "pending": new_pending, "history": history}),
     )
     return reply_text
-
-
-def _direct_greeting_reply(
-    business: Business, message_text: str, stage: str, pending: dict
-) -> str | None:
-    if stage != STAGE_IDLE or pending:
-        return None
-    if not _SIMPLE_GREETING_RE.match(message_text):
-        return None
-    if business.business_type == BusinessType.SERVICES:
-        return (
-            f"Hello! Welcome to {business.name}. Would you like to book an appointment "
-            "or ask something about the studio?"
-        )
-    return (
-        f"Hello! Welcome to {business.name}. Would you like to place an order "
-        "or ask something about the shop?"
-    )
-
-
-async def _direct_payment_status_reply(
-    session: AsyncSession, business: Business, customer, message_text: str, mpesa_callback_secret: str = ""
-) -> str | tuple[str, str, dict] | None:
-    lowered = message_text.lower()
-    is_status_query = bool(_PAYMENT_STATUS_RE.search(message_text))
-    wants_resend = any(
-        phrase in lowered
-        for phrase in (
-            "resend", "send again", "prompt again", "retry", "didnt get", "didn't get",
-            "another prompt", "new prompt", "stk push", "stk", "prompt", "push",
-            "popup", "pop up", "send prompt", "send push"
-        )
-    )
-    if not is_status_query and not wants_resend:
-        return None
-    # Guard: if the message is an informational question about payments/deposits
-    # (not an actual status check), let the LLM handle it naturally.
-    if any(phrase in lowered for phrase in (
-        "do you", "how much", "what is", "is there", "require", "required", "need",
-        "accept", "take", "can i", "can you", "confirm if", "want to book", "book",
-        "available", "offer", "tell me",
-    )):
-        return None
-    if not any(word in lowered for word in ("paid", "payment", "deposit", "mpesa", "m-pesa", "stk", "resend", "prompt", "retry", "again")):
-        return None
-
-    digits = "".join(c for c in message_text if c.isdigit())
-    custom_phone = digits if len(digits) >= 9 else None
-
-    bookings = await repo.list_upcoming_bookings_for_customer(session, business.id, customer.id)
-    pending_bookings = [b for b in bookings if b.status == BookingStatus.PENDING_DEPOSIT]
-    if pending_bookings:
-        booking = pending_bookings[0]
-        service = await repo.get_service_for_business(session, business.id, booking.service_id)
-        service_name = service.name if service else "your booking"
-
-        if wants_resend:
-            target = custom_phone or customer.phone_number
-            resend_pending = {
-                "type": "resend_deposit",
-                "booking_id": booking.id,
-                "deposit_amount": float(booking.deposit_amount),
-                "item_name": service_name,
-                "payment_phone": custom_phone,
-            }
-            reply = (
-                f"Sure! Would you like me to send the M-Pesa prompt for KES {_fmt_price(booking.deposit_amount)} ({service_name}) to {target}?\n"
-                f"Reply YES to proceed, or reply with a different M-Pesa number (e.g. 0712345678)."
-            )
-            return reply, STAGE_CONFIRMING, resend_pending
-
-        return (
-            f"Thanks - I can see your {service_name} on {booking.slot_start:%d %b at %H:%M} "
-            "is still waiting for the M-Pesa confirmation. Once it comes through, "
-            "I'll update you here automatically. (Reply 'RESEND' if you need a new prompt)."
-        )
-
-    orders = await repo.list_upcoming_orders_for_customer(session, business.id, customer.id)
-    pending_orders = [o for o in orders if o.status == OrderStatus.PENDING_DEPOSIT]
-    if pending_orders:
-        summary = await _order_summary_text(session, business, pending_orders[0])
-        order = pending_orders[0]
-
-        if wants_resend:
-            target = custom_phone or customer.phone_number
-            resend_pending = {
-                "type": "resend_deposit",
-                "order_id": order.id,
-                "deposit_amount": float(order.deposit_amount),
-                "item_name": summary,
-                "payment_phone": custom_phone,
-            }
-            reply = (
-                f"Sure! Would you like me to send the M-Pesa prompt for KES {_fmt_price(order.deposit_amount)} ({summary}) to {target}?\n"
-                f"Reply YES to proceed, or reply with a different M-Pesa number (e.g. 0712345678)."
-            )
-            return reply, STAGE_CONFIRMING, resend_pending
-
-        return (
-            f"Thanks - I can see your order ({summary}) is still waiting for the "
-            "M-Pesa confirmation. Once it comes through, I'll update you here automatically. (Reply 'RESEND' if you need a new prompt)."
-        )
-
-    # No pending deposits found — let the LLM handle the message naturally
-    # instead of giving a confusing "I don't see a booking" response.
-    return None
-
-
-
 
 
 async def _select_booking_from_message(
@@ -398,110 +269,6 @@ async def _select_booking_from_message(
         elif date_matches and not any_service_hint:
             matches.append(booking)
     return matches[0] if len(matches) == 1 else None
-
-
-async def _direct_pending_booking_reference_reply(
-    session: AsyncSession, business: Business, customer, message_text: str
-) -> str | None:
-    """If the customer loosely refers to an already-created pending booking
-    ("the Friday haircut"), don't let the LLM turn that into a new booking."""
-    lowered = message_text.lower()
-    if any(word in lowered for word in ("book", "booking", "appointment", "schedule", "reschedule", "cancel")):
-        return None
-
-    bookings = await repo.list_upcoming_bookings_for_customer(session, business.id, customer.id)
-    pending_bookings = [b for b in bookings if b.status == BookingStatus.PENDING_DEPOSIT]
-    for booking in pending_bookings:
-        service = await repo.get_service_for_business(session, business.id, booking.service_id)
-        if service is None:
-            continue
-        if service.name.lower() not in lowered:
-            continue
-        if _extract_date_text(message_text) is None and not _looks_like_weekday_reference(lowered):
-            continue
-        return (
-            f"Your {service.name} booking on {booking.slot_start:%d %b at %H:%M} is still "
-            "pending deposit confirmation. If you've paid, I'll update you here once "
-            "M-Pesa confirms it."
-        )
-    return None
-
-
-def _looks_like_weekday_reference(lowered_text: str) -> bool:
-    return any(
-        word in lowered_text
-        for word in (
-            "monday",
-            "tuesday",
-            "wednesday",
-            "thursday",
-            "friday",
-            "fraiday",
-            "saturday",
-            "sunday",
-            "tomorrow",
-            "tommorrow",
-            "today",
-        )
-    )
-
-
-
-
-
-def _deterministic_intent(
-    message_text: str, stage: str, pending: dict, business: Business
-) -> ai.Intent | None:
-    lowered = message_text.lower()
-    if _CODE_REQUEST_RE.search(message_text):
-        return ai.Intent(
-            type=ai.IntentType.OFF_TOPIC,
-            entities={},
-            reply_text=f"I'm the virtual assistant for {business.name}! I can only assist with our listed services, products, bookings, and operating hours.",
-        )
-
-    if stage not in _ACTIVE_DETAIL_STAGES or pending.get("type") not in _ACTIVE_DETAIL_TYPES:
-        return None
-
-    entities = _extract_active_detail_entities(message_text, pending, business)
-    if not entities:
-        return None
-
-    ptype = pending.get("type")
-    if ptype == "order":
-        return ai.Intent(type=ai.IntentType.BUY_PRODUCT, entities=entities)
-
-    if ptype in ("booking", "reschedule_booking", "booking_time_retry"):
-        if "date_text" not in entities or "time_text" not in entities:
-            return None
-
-    return ai.Intent(type=ai.IntentType.BOOK_SERVICE, entities=entities)
-
-
-def _extract_active_detail_entities(
-    message_text: str, pending: dict, business: Business
-) -> dict:
-    entities: dict = {}
-    ptype = pending.get("type")
-    if ptype == "order":
-        lowered = message_text.strip().lower()
-        if lowered in ("delivery", "deliver"):
-            entities["fulfillment_type"] = "delivery"
-        elif lowered in ("pickup", "pick up", "store pickup"):
-            entities["fulfillment_type"] = "pickup"
-        elif lowered.isdigit():
-            entities["quantity"] = int(lowered)
-        else:
-            if pending.get("fulfillment_type") == "delivery" and not pending.get("delivery_address"):
-                entities["delivery_address"] = message_text.strip()
-    else:
-        date_text = _extract_date_text(message_text, pending)
-        time_text = _extract_time_text(message_text, pending, business)
-        if date_text:
-            entities["date_text"] = date_text
-        if time_text:
-            entities["time_text"] = time_text
-    return entities
 
 
 _OWNER_AUTHORITY_ACTS = {
@@ -805,6 +572,9 @@ async def _dispatch(
 
     if intent.type == ai.IntentType.BUY_PRODUCT:
         return await _advance_order(session, business, pending, intent.entities)
+
+    if intent.type == ai.IntentType.RESEND_DEPOSIT:
+        return await _start_resend_deposit(session, business, customer, intent)
 
     if intent.type == ai.IntentType.CANCEL_BOOKING:
         return await _start_cancel_booking(session, business, customer)
@@ -1514,6 +1284,56 @@ async def _start_cancel_order(session: AsyncSession, business: Business, custome
         summary = await _order_summary_text(session, business, o)
         pending = {"type": "cancel_order", "order_id": o.id}
         return f"Reply YES to cancel order O{o.id} ({summary}).", STAGE_CONFIRMING, pending
+
+
+async def _start_resend_deposit(
+    session: AsyncSession, business: Business, customer, intent: ai.Intent
+) -> tuple[str, str, dict]:
+    custom_phone = (intent.entities or {}).get("payment_phone")
+    target_phone = custom_phone or customer.phone_number
+
+    bookings = await repo.list_upcoming_bookings_for_customer(session, business.id, customer.id)
+    pending_bookings = [b for b in bookings if b.status == BookingStatus.PENDING_DEPOSIT]
+    if pending_bookings:
+        booking = pending_bookings[0]
+        service = await repo.get_service_for_business(session, business.id, booking.service_id)
+        service_name = service.name if service else "your booking"
+        resend_pending = {
+            "type": "resend_deposit",
+            "booking_id": booking.id,
+            "deposit_amount": float(booking.deposit_amount),
+            "item_name": service_name,
+            "payment_phone": custom_phone,
+        }
+        reply = (
+            f"Sure! Would you like me to send the M-Pesa prompt for KES {_fmt_price(booking.deposit_amount)} ({service_name}) to {target_phone}?\n"
+            f"Reply YES to proceed, or reply with a different M-Pesa number (e.g. 0712345678)."
+        )
+        return reply, STAGE_CONFIRMING, resend_pending
+
+    orders = await repo.list_upcoming_orders_for_customer(session, business.id, customer.id)
+    pending_orders = [o for o in orders if o.status == OrderStatus.PENDING_DEPOSIT]
+    if pending_orders:
+        order = pending_orders[0]
+        summary = await _order_summary_text(session, business, order)
+        resend_pending = {
+            "type": "resend_deposit",
+            "order_id": order.id,
+            "deposit_amount": float(order.deposit_amount),
+            "item_name": summary,
+            "payment_phone": custom_phone,
+        }
+        reply = (
+            f"Sure! Would you like me to send the M-Pesa prompt for KES {_fmt_price(order.deposit_amount)} ({summary}) to {target_phone}?\n"
+            f"Reply YES to proceed, or reply with a different M-Pesa number (e.g. 0712345678)."
+        )
+        return reply, STAGE_CONFIRMING, resend_pending
+
+    return (
+        "I don't see an upcoming booking or order waiting for a deposit on this chat right now. Would you like to make a new booking?",
+        STAGE_IDLE,
+        {},
+    )
 
     lines = ["Which order would you like to cancel?"]
     candidates = []

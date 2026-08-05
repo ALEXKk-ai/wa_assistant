@@ -49,6 +49,7 @@ class IntentType(str, Enum):
     CANCEL_BOOKING = "CANCEL_BOOKING"  # customer wants to cancel an existing, already-created booking
     CANCEL_ORDER = "CANCEL_ORDER"  # same, for an existing order
     RESCHEDULE_BOOKING = "RESCHEDULE_BOOKING"  # customer wants to move an existing booking to a new time
+    RESEND_DEPOSIT = "RESEND_DEPOSIT"  # customer wants an M-Pesa deposit prompt resent/retry/STK push
     CONFIRM_ACTION = "CONFIRM_ACTION"  # customer is saying yes/go ahead to a pending booking or order
     CANCEL_ACTION = "CANCEL_ACTION"  # customer wants to abandon what's currently being collected/confirmed
     OUT_OF_SCOPE = "OUT_OF_SCOPE"  # business inquiry missing from catalog - needs human owner escalation
@@ -117,14 +118,14 @@ _SYSTEM_PROMPT = """You are a helpful, conversational WhatsApp assistant for {bu
 Given the business's catalog, operating hours, recent conversation history, and what's currently \
 in progress, analyze the customer's message and respond ONLY with JSON matching this schema, no markdown:
 
-{{"type": "ASK_INFO|LIST_SERVICES|LIST_PRODUCTS|BOOK_SERVICE|BUY_PRODUCT|CHECK_STATUS|CANCEL_BOOKING|CANCEL_ORDER|RESCHEDULE_BOOKING|CONFIRM_ACTION|CANCEL_ACTION|OUT_OF_SCOPE|OFF_TOPIC", \
+{{"type": "ASK_INFO|LIST_SERVICES|LIST_PRODUCTS|BOOK_SERVICE|BUY_PRODUCT|CHECK_STATUS|CANCEL_BOOKING|CANCEL_ORDER|RESCHEDULE_BOOKING|RESEND_DEPOSIT|CONFIRM_ACTION|CANCEL_ACTION|OUT_OF_SCOPE|OFF_TOPIC", \
 "conversation_act": "REQUEST|QUESTION|ACKNOWLEDGEMENT|CLOSING|CORRECTION|UNCERTAIN_ATTENDANCE|COMPLAINT|HUMAN_REQUEST|PROPOSAL|UNCLEAR", \
 "authority_route": "NORMAL|OWNER_AUTHORITY_REQUIRED|OFF_TOPIC|UNCLEAR", \
 "entities": {{"service_name": null, "product_name": null, "quantity": null, "date_text": null, "time_text": null, "fulfillment_type": null, "delivery_address": null, "payment_phone": null}}, \
 "reply_text": "<natural, friendly reply to send the customer, used for ASK_INFO, LIST_SERVICES, LIST_PRODUCTS, CHECK_STATUS, OFF_TOPIC, and general chat>"}}
 
 Rules for classification:
-- type MUST BE EXACTLY ONE OF: ASK_INFO, LIST_SERVICES, LIST_PRODUCTS, BOOK_SERVICE, BUY_PRODUCT, CHECK_STATUS, CANCEL_BOOKING, CANCEL_ORDER, RESCHEDULE_BOOKING, CONFIRM_ACTION, CANCEL_ACTION, OUT_OF_SCOPE, OFF_TOPIC. Do not use COMPLAINT as type; use OUT_OF_SCOPE for complaints and set conversation_act to COMPLAINT.
+- type MUST BE EXACTLY ONE OF: ASK_INFO, LIST_SERVICES, LIST_PRODUCTS, BOOK_SERVICE, BUY_PRODUCT, CHECK_STATUS, CANCEL_BOOKING, CANCEL_ORDER, RESCHEDULE_BOOKING, RESEND_DEPOSIT, CONFIRM_ACTION, CANCEL_ACTION, OUT_OF_SCOPE, OFF_TOPIC. Do not use COMPLAINT as type; use OUT_OF_SCOPE for complaints and set conversation_act to COMPLAINT.
 - BOOK_SERVICE / BUY_PRODUCT: Use when the customer explicitly expresses intent to reserve, book, purchase, or schedule an appointment/order (e.g. "I want to book a haircut", "reserve manicure tomorrow at 2pm", "I'd like to buy shampoo"), OR gives a date/time/quantity for an in-progress booking/order.
 - service_name MUST be one of the exact names from the Catalog below, or null. NEVER invent or guess a service name from general knowledge (e.g. do NOT output "Pedicure", "Manicure", "Massage" etc. unless they appear in the Catalog). If the customer mentions a service not in the Catalog, set service_name to null and use type ASK_INFO. If the customer is confirming a booking discussed in the Recent conversation (e.g. "yes book it", "let's do tomorrow at 11am"), set service_name to the catalog service name from the conversation context.
 - product_name MUST be one of the exact names from the Catalog below, or null. Same rules as service_name.
@@ -136,6 +137,7 @@ Rules for classification:
 - payment_phone: phone number if customer provides an M-Pesa payment line in THIS message (e.g. "0712345678", "pay via 0711223344"), else null.
 - CANCEL_BOOKING / CANCEL_ORDER: Customer wants to cancel an existing, already-made booking/order.
 - RESCHEDULE_BOOKING: Customer wants to move an existing booking to a new time.
+- RESEND_DEPOSIT: Customer asks to resend, retry, or receive an M-Pesa deposit prompt/STK push for an existing booking/order (e.g. "resend prompt", "send an stk push", "retry payment", "didn't get popup", "push to my phone").
 - CHECK_STATUS: ONLY use when the customer explicitly asks to see/list their bookings or orders (e.g. "what are my bookings?", "do I have anything upcoming?", "show my orders"). Do NOT use CHECK_STATUS for questions ABOUT a booking process (e.g. "how long until you confirm?", "where are you located?", "what happens if payment fails?") — those are ASK_INFO.
 - CONFIRM_ACTION: Customer agrees to proceed with an in-progress action ("yes", "confirm", "go ahead").
 - CANCEL_ACTION: Customer wants to abandon an in-progress draft action ("nevermind", "stop").

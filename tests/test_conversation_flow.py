@@ -445,6 +445,7 @@ async def test_resend_prompt_asks_confirmation(session, business, monkeypatch):
                 entities={"service_name": "Haircut", "date_text": "18 August 2026", "time_text": "14:00"},
             ),
             ai.Intent(type=ai.IntentType.CONFIRM_ACTION, entities={}),
+            ai.Intent(type=ai.IntentType.RESEND_DEPOSIT, entities={}),
             ai.Intent(type=ai.IntentType.CONFIRM_ACTION, entities={}),
         ],
     )
