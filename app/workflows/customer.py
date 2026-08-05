@@ -720,12 +720,8 @@ async def _dispatch(
         return reply, stage, pending  # topic switch: leave any in-progress flow untouched
 
     if business.business_type == BusinessType.SERVICES:
-        if intent.type == ai.IntentType.LIST_PRODUCTS:
-            hdr = f"We don't sell physical products, but here are the services {business.name} offers:"
-            reply = await _list_services_text(session, business, header=hdr)
-            return reply, stage, pending
-        if intent.type == ai.IntentType.LIST_SERVICES:
-            reply = await _list_services_text(session, business)
+        if intent.type in (ai.IntentType.LIST_PRODUCTS, ai.IntentType.LIST_SERVICES):
+            reply = intent.reply_text or await _list_services_text(session, business)
             return reply, stage, pending
         if intent.type in (ai.IntentType.BOOK_SERVICE, ai.IntentType.BUY_PRODUCT):
             if pending.get("type") == "reschedule_booking":
