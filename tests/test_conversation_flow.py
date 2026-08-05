@@ -165,7 +165,8 @@ async def test_unrelated_question_mid_booking_does_not_break_pending_state(sessi
     phone = "254711115555"
     await customer_mod.handle_inbound_message(session, business, phone, "haircut thursday", "cb-secret")
     hours_reply = await customer_mod.handle_inbound_message(session, business, phone, "what are your hours?", "cb-secret")
-    assert hours_reply == "We're open 9am-6pm every day."
+    # Hours questions now always use DB-sourced hours (never LLM reply_text)
+    assert "hours" in hours_reply.lower()
 
     final_reply = await customer_mod.handle_inbound_message(session, business, phone, "2pm", "cb-secret")
     assert future["day_name"] in final_reply

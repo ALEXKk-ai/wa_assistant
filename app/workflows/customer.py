@@ -607,8 +607,55 @@ async def _dispatch(
         reply = await _list_products_text(session, business)
         return reply, stage, pending
     if intent.type == ai.IntentType.CHECK_STATUS:
-        return await _check_status_text(session, business, customer), stage, pending
+        status_text = await _check_status_text(session, business, customer)
+        # Fallback: if no bookings/orders AND message looks like a business-
+        # availability question (mentions a date/day or a service name),
+        # re-route to booking or hours reply instead of showing empty status.
+        if status_text.startswith("You don't have any upcoming"):
+            lowered = message_text.lower()
+            has_date = _extract_date_text(message_text, pending) is not None
+            has_avail = any(w in lowered for w in ("open", "available", "close", "hour"))
+            catalog_names = [item.get("name", "").lower() for item in await _build_catalog_summary(session, business)]
+            has_service = any(n and n in lowered for n in catalog_names)
+            if has_date and has_service:
+                # Customer asked "do you open tomorrow so I can come for a haircut"
+                # → treat as BOOK_SERVICE
+                return await _advance_booking(
+                    session, business, pending, intent.entities,
+                    message_text=message_text, history=history,
+                )
+            if has_date or has_avail:
+                # Customer asked "do you open tomorrow?" → answer with DB hours
+                hours = json.loads(business.hours_json or "{}")
+                return f"Our hours are: {hours_mod.format_hours(hours)}", stage, pending
+        return status_text, stage, pending
     if intent.type == ai.IntentType.ASK_INFO:
+        # For hours-related questions, ALWAYS use DB-sourced hours instead of
+        # trusting the LLM's reply_text which can paraphrase incorrectly
+        # (e.g. "Monday to Sunday (closed on Sundays)").
+        lowered = message_text.lower()
+        is_hours_question = any(w in lowered for w in (
+            "hour", "open", "close", "closed", "closing", "available",
+        ))
+        # Also catch day-specific questions like "do you open tomorrow"
+        has_day_ref = _extract_date_text(message_text, pending) is not None
+        if is_hours_question or has_day_ref:
+            hours = json.loads(business.hours_json or "{}")
+            # If asking about a specific day, answer specifically
+            if has_day_ref:
+                date_text = _extract_date_text(message_text, pending)
+                parsed = _parse_date_text(date_text) if date_text else None
+                if parsed is not None:
+                    from app.hours import DAYS, DAY_NAMES
+                    day_key = DAYS[parsed.weekday()]
+                    day_info = hours.get(day_key)
+                    day_name = DAY_NAMES[day_key]
+                    if day_info is None:
+                        reply = f"Sorry, we're closed on {day_name}s. Our hours are: {hours_mod.format_hours(hours)}"
+                    else:
+                        reply = f"Yes, we're open on {day_name} from {day_info['open']} to {day_info['close']}!"
+                    return reply, stage, pending
+            return f"Our hours are: {hours_mod.format_hours(hours)}", stage, pending
         if intent.reply_text:
             return intent.reply_text, stage, pending
         return await _grounded_info_reply(
