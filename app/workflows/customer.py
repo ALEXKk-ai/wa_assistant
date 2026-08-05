@@ -527,6 +527,7 @@ async def _pre_route_conversation_act(
     if (
         intent.authority_route == ai.AuthorityRoute.OWNER_AUTHORITY_REQUIRED
         or act in _OWNER_AUTHORITY_ACTS
+        or bool(_EXPLICIT_HUMAN_REQUEST_RE.search(message_text))
     ):
         await owner_workflow.notify_owner_unanswered_question(
             business, customer_phone, message_text, customer_name=customer.name
