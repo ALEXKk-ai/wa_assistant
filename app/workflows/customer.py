@@ -215,6 +215,8 @@ async def handle_inbound_message(
     if direct_reply is None:
         direct_reply = await _direct_pending_booking_reference_reply(session, business, customer, message_text)
     if direct_reply is None:
+        direct_reply = await _direct_deposit_info_reply(session, business, message_text)
+    if direct_reply is None:
         direct_reply = await _direct_catalog_availability_reply(session, business, message_text)
     if direct_reply is None:
         direct_reply = _direct_location_reply(business, message_text)
@@ -542,6 +544,35 @@ def _direct_payment_methods_reply(business: Business, message_text: str) -> str 
     return None
 
 
+async def _direct_deposit_info_reply(
+    session: AsyncSession, business: Business, message_text: str
+) -> str | None:
+    lowered = message_text.lower()
+    if "deposit" not in lowered:
+        return None
+    if any(phrase in lowered for phrase in ("paid", "stk", "resend", "receipt", "prompt")):
+        return None
+
+    services = await repo.list_services(session, business.id)
+    matched_service = None
+    for service in services:
+        if service.name.lower() in lowered:
+            matched_service = service
+            break
+
+    dep_pct = business.deposit_percentage or 0.0
+    if matched_service:
+        price_val = float(matched_service.price)
+        if dep_pct > 0:
+            dep_val = int(round(price_val * (dep_pct / 100.0)))
+            return f"For {matched_service.name} (KES {price_val:,.0f}), a {dep_pct:.0f}% deposit of KES {dep_val:,.0f} via M-Pesa is required to secure your booking slot."
+        return f"No deposit is required for {matched_service.name} (KES {price_val:,.0f}). You can pay when you arrive for your appointment!"
+
+    if dep_pct > 0:
+        return f"We require a {dep_pct:.0f}% deposit via M-Pesa to secure all booking slots."
+    return "No deposit is required for bookings! You can pay when you arrive for your appointment."
+
+
 async def _direct_catalog_availability_reply(
     session: AsyncSession, business: Business, message_text: str
 ) -> str | None:
@@ -585,7 +616,7 @@ async def _direct_catalog_availability_reply(
 def _extract_catalog_item_question(message_text: str) -> str | None:
     text = message_text.strip()
     lowered = text.lower()
-    if any(word in lowered for word in ("hours", "address", "location", "located", "open", "close", "operating")):
+    if any(word in lowered for word in ("hours", "address", "location", "located", "open", "close", "operating", "deposit", "payment", "paid")):
         return None
     if "what" in lowered and ("offer" in lowered or "have" in lowered or "available" in lowered):
         return None
@@ -599,6 +630,8 @@ def _extract_catalog_item_question(message_text: str) -> str | None:
         if item.lower().startswith(prefix):
             item = item[len(prefix):]
             break
+    if item.lower() in ("required", "needed", "for", "is", "are", "cost", "price", "deposit"):
+        return None
     return item or None
 
 
