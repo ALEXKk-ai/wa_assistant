@@ -385,68 +385,7 @@ async def _direct_payment_status_reply(
     )
 
 
-async def _direct_reschedule_request_transition(
-    session: AsyncSession, business: Business, customer, message_text: str, stage: str = STAGE_IDLE
-) -> tuple[str, str, dict] | None:
-    if stage != STAGE_IDLE:
-        return None
-    lowered = message_text.lower()
-    if "reschedule" not in lowered and "move" not in lowered:
-        return None
-    if business.business_type != BusinessType.SERVICES:
-        return "Rescheduling isn't available for orders - please contact us directly.", STAGE_IDLE, {}
 
-    bookings = await repo.list_upcoming_bookings_for_customer(session, business.id, customer.id)
-    candidates = [
-        b for b in bookings
-        if b.status in (
-            BookingStatus.CONFIRMED,
-            BookingStatus.PENDING_DEPOSIT,
-            BookingStatus.AWAITING_RESCHEDULE_CONFIRMATION,
-        )
-    ]
-    if not candidates:
-        return "You don't have any upcoming bookings to reschedule.", STAGE_IDLE, {}
-
-    selected = await _select_booking_from_message(session, business, candidates, message_text)
-    target_text = _reschedule_target_fragment(message_text)
-    entities = _extract_active_detail_entities(target_text, {"type": "reschedule_booking"}, business)
-
-    if selected is None:
-        if len(candidates) == 1:
-            selected = candidates[0]
-        else:
-            lines = ["Which booking would you like to reschedule?"]
-            ids = []
-            for i, booking in enumerate(candidates, start=1):
-                service = await repo.get_service_for_business(session, business.id, booking.service_id)
-                service_name = service.name if service else "a service"
-                lines.append(f"{i}. {service_name} on {booking.slot_start:%d %b at %H:%M}")
-                ids.append(booking.id)
-            pending = {"purpose": "reschedule_booking", "candidates": ids}
-            return "\n".join(lines), STAGE_SELECTING_BOOKING, pending
-
-    service = await repo.get_service_for_business(session, business.id, selected.service_id)
-    service_name = service.name if service else "your service"
-    pending = {"type": "reschedule_booking", "booking_id": selected.id}
-    pending.update(entities)
-    reply, new_stage, new_pending = await _advance_reschedule(session, business, pending, entities)
-    if reply == "What date and time would you like to move it to?":
-        reply = (
-            f"Okay - rescheduling your {service_name} "
-            f"(currently {selected.slot_start:%d %b at %H:%M}). "
-            "What date and time would you like instead?"
-        )
-    return reply, new_stage, new_pending
-
-
-def _reschedule_target_fragment(message_text: str) -> str:
-    lowered = message_text.lower()
-    for marker in (" reschedule to ", " move to ", " moved to ", " to "):
-        index = lowered.rfind(marker)
-        if index != -1:
-            return message_text[index + len(marker):].strip()
-    return message_text
 
 
 async def _select_booking_from_message(
@@ -523,58 +462,7 @@ def _looks_like_weekday_reference(lowered_text: str) -> bool:
     )
 
 
-def _direct_location_reply(business: Business, message_text: str) -> str | None:
-    lowered = message_text.lower()
-    if any(phrase in lowered for phrase in ("where located", "where are you", "where is your", "your address", "your location", "how do i get there", "directions to")):
-        if business.address_text:
-            return f"We are located at: {business.address_text}. Let us know if you'd like to book an appointment or ask about our services!"
-        return f"We are located at {business.name}! Let us know if you'd like to book an appointment or ask about our services."
-    return None
 
-
-def _direct_hours_reply(business: Business, message_text: str) -> str | None:
-    lowered = message_text.lower()
-    if any(phrase in lowered for phrase in ("operating hours", "working hours", "opening hours", "open on", "what time do you open", "what time do you close")):
-        hours = json.loads(business.hours_json or "{}")
-        formatted = hours_mod.format_hours(hours)
-        return f"Our operating hours are:\n{formatted}\n\nLet us know when you'd like to visit!"
-    return None
-
-
-def _direct_payment_methods_reply(business: Business, message_text: str) -> str | None:
-    lowered = message_text.lower()
-    if any(phrase in lowered for phrase in ("accept mpesa", "accept m-pesa", "take mpesa", "take m-pesa", "pay cash", "take cash", "accept cash", "payment methods", "how do i pay")):
-        return "We accept M-Pesa for deposit payments and M-Pesa or cash on arrival!"
-    return None
-
-
-async def _direct_deposit_info_reply(
-    session: AsyncSession, business: Business, message_text: str
-) -> str | None:
-    lowered = message_text.lower()
-    if "deposit" not in lowered:
-        return None
-    if any(phrase in lowered for phrase in ("paid", "stk", "resend", "receipt", "prompt")):
-        return None
-
-    services = await repo.list_services(session, business.id)
-    matched_service = None
-    for service in services:
-        if service.name.lower() in lowered:
-            matched_service = service
-            break
-
-    dep_pct = business.deposit_percentage or 0.0
-    if matched_service:
-        price_val = float(matched_service.price)
-        if dep_pct > 0:
-            dep_val = int(round(price_val * (dep_pct / 100.0)))
-            return f"For {matched_service.name} (KES {price_val:,.0f}), a {dep_pct:.0f}% deposit of KES {dep_val:,.0f} via M-Pesa is required to secure your booking slot."
-        return f"No deposit is required for {matched_service.name} (KES {price_val:,.0f}). You can pay when you arrive for your appointment!"
-
-    if dep_pct > 0:
-        return f"We require a {dep_pct:.0f}% deposit via M-Pesa to secure all booking slots."
-    return "No deposit is required for bookings! You can pay when you arrive for your appointment."
 
 
 async def _direct_catalog_availability_reply(

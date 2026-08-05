@@ -2,6 +2,11 @@ __pycache__/
 *.pyc
 .env
 *.db
+*.db-journal
+*.sqlite
+*.sqlite3
+*.sqlite-journal
 .pytest_cache/
 data/
+reports/
 .venv/
