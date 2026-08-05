@@ -248,7 +248,7 @@ async def handle_inbound_message(
             reply_text, new_stage, new_pending = pre_routed
         else:
             reply_text, new_stage, new_pending = await _dispatch(
-                session, business, customer, customer_phone, message_text, intent, stage, pending, mpesa_callback_secret
+                session, business, customer, customer_phone, message_text, intent, stage, pending, mpesa_callback_secret, history
             )
 
     history.append({"role": "bot", "text": reply_text})
@@ -292,7 +292,13 @@ async def _direct_payment_status_reply(
     )
     if not is_status_query and not wants_resend:
         return None
-    if any(phrase in lowered for phrase in ("do you", "how much", "what is", "is there", "require", "required", "need")):
+    # Guard: if the message is an informational question about payments/deposits
+    # (not an actual status check), let the LLM handle it naturally.
+    if any(phrase in lowered for phrase in (
+        "do you", "how much", "what is", "is there", "require", "required", "need",
+        "accept", "take", "can i", "can you", "confirm if", "want to book", "book",
+        "available", "offer", "tell me",
+    )):
         return None
     if not any(word in lowered for word in ("paid", "payment", "deposit", "mpesa", "m-pesa", "stk", "resend", "prompt", "retry", "again")):
         return None
@@ -354,10 +360,9 @@ async def _direct_payment_status_reply(
             "M-Pesa confirmation. Once it comes through, I'll update you here automatically. (Reply 'RESEND' if you need a new prompt)."
         )
 
-    return (
-        "Thanks for letting us know. I don't see a booking or order currently waiting "
-        "for deposit on this chat, so the team may need to check manually."
-    )
+    # No pending deposits found — let the LLM handle the message naturally
+    # instead of giving a confusing "I don't see a booking" response.
+    return None
 
 
 
@@ -597,7 +602,11 @@ def _extract_date_text(message_text: str, pending: dict | None = None) -> str | 
         return "tomorrow"
     if "tomorrow" in lowered:
         return "tomorrow"
+    if "today" in lowered:
+        return "today"
     if "tonight" in lowered:
+        return "today"
+    if any(w in lowered for w in ("this morning", "this afternoon", "this evening")):
         return "today"
     weekday_match = re.search(
         r"\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun)\b",
@@ -698,7 +707,7 @@ def _infer_bare_time_text(message_text: str, pending: dict, business: Business) 
 
 
 async def _dispatch(
-    session, business, customer, customer_phone, message_text, intent, stage, pending, mpesa_callback_secret
+    session, business, customer, customer_phone, message_text, intent, stage, pending, mpesa_callback_secret, history=None
 ) -> tuple[str, str, dict]:
     """Returns (reply_text, new_stage, new_pending)."""
 
@@ -731,7 +740,7 @@ async def _dispatch(
             entities = dict(intent.entities)
             if not entities.get("service_name"):
                 entities["service_name"] = entities.get("product_name")
-            return await _advance_booking(session, business, pending, entities, message_text=message_text)
+            return await _advance_booking(session, business, pending, entities, message_text=message_text, history=history)
 
     if business.business_type == BusinessType.GOODS:
         if intent.type == ai.IntentType.LIST_SERVICES:
@@ -767,7 +776,7 @@ async def _dispatch(
             return await _advance_reschedule(session, business, pending, intent.entities)
         if pending.get("type") == "booking_time_retry":
             return await _advance_booking_time_retry(session, business, pending, intent.entities)
-        return await _advance_booking(session, business, pending, intent.entities, message_text=message_text)
+        return await _advance_booking(session, business, pending, intent.entities, message_text=message_text, history=history)
 
     if intent.type == ai.IntentType.BUY_PRODUCT:
         return await _advance_order(session, business, pending, intent.entities)
@@ -993,6 +1002,34 @@ def _merge_entities(pending: dict, entities: dict, keys: list[str]) -> dict:
     return merged
 
 
+def _secondary_info_addendum(message_text: str, business: Business) -> str:
+    """Scan for common secondary questions in a multi-part message and build
+    a brief addendum so the customer doesn't have to ask again."""
+    lowered = message_text.lower()
+    parts: list[str] = []
+
+    # Location / address question
+    if any(w in lowered for w in ("where", "location", "address", "directions", "find", "located")):
+        if business.address_text:
+            parts.append(f"📍 We're located at: {business.address_text}")
+
+    # M-Pesa / payment method question
+    if any(w in lowered for w in ("m-pesa", "mpesa", "payment method", "pay with", "take m-pesa", "accept m-pesa")):
+        if business.mpesa_shortcode:
+            parts.append("💳 Yes, we accept M-Pesa payments!")
+        else:
+            parts.append("💳 Payment is collected at the shop.")
+
+    # Deposit question (only if not already covered by the booking confirmation)
+    if any(w in lowered for w in ("deposit", "upfront", "pay first", "pay before")):
+        if business.deposit_percentage and business.deposit_percentage > 0:
+            parts.append(f"💰 A {business.deposit_percentage:.0f}% deposit is required to secure your slot.")
+
+    if not parts:
+        return ""
+    return "\n\n" + "\n".join(parts)
+
+
 def _validate_slot(business: Business, slot_start: datetime, slot_end: datetime) -> str | None:
     """Returns an error message if the slot is invalid (already in the
     past, or outside business hours), else None. Used both when first
@@ -1007,12 +1044,33 @@ def _validate_slot(business: Business, slot_start: datetime, slot_end: datetime)
     return None if ok else msg
 
 
+def _infer_service_from_history(history: list[dict], services) -> object | None:
+    """Scan recent bot messages for catalog service names that were discussed.
+    Returns the matching service if exactly one is found in the last few turns."""
+    if not history:
+        return None
+    service_names_lower = {s.name.strip().lower(): s for s in services}
+    # Look at the last 4 bot messages (most recent context)
+    recent_bot_msgs = [t for t in history if t.get("role") == "bot"][-4:]
+    found = set()
+    for turn in recent_bot_msgs:
+        text = (turn.get("text") or "").lower()
+        for name_lower, svc in service_names_lower.items():
+            if name_lower in text:
+                found.add(svc.id)
+    if len(found) == 1:
+        svc_id = found.pop()
+        return next((s for s in services if s.id == svc_id), None)
+    return None
+
+
 async def _advance_booking(
     session: AsyncSession,
     business: Business,
     pending: dict,
     entities: dict,
     message_text: str = "",
+    history: list[dict] | None = None,
 ):
     pending = _merge_entities(pending, entities, ["service_name", "date_text", "time_text", "payment_phone"])
     pending["type"] = "booking"
@@ -1041,6 +1099,15 @@ async def _advance_booking(
                 pending["service_id"] = s.id
                 pending["service_name"] = s.name
                 break
+
+    # Fix 4: If service is still None and no explicit service_name was given,
+    # try to infer it from the conversation history (e.g. customer discussed
+    # braiding in a previous turn and now says "yes book for tomorrow at 11am")
+    if service is None and not pending.get("service_name"):
+        service = _infer_service_from_history(history or [], services)
+        if service is not None:
+            pending["service_id"] = service.id
+            pending["service_name"] = service.name
 
     if service is None:
         if pending.get("service_name"):
@@ -1125,6 +1192,10 @@ async def _advance_booking(
         f"(KES {_fmt_price(service.price)}, {service.duration_minutes} min)"
         f"{deposit_text}, or let me know if you'd like to change anything."
     )
+    # Fix 5: Append answers to secondary questions the customer asked in the same message
+    addendum = _secondary_info_addendum(message_text, business)
+    if addendum:
+        reply += addendum
     return reply, STAGE_CONFIRMING, pending
 
 
@@ -1885,6 +1956,8 @@ def _parse_date_text(date_text: str) -> datetime | None:
     lowered = date_text.lower()
     if "day after tomorrow" in lowered:
         return (now + timedelta(days=2)).replace(hour=0, minute=0, second=0, microsecond=0)
+    if any(w in lowered for w in ("today", "tonight", "this morning", "this afternoon", "this evening")):
+        return now.replace(hour=0, minute=0, second=0, microsecond=0)
     if "tomorrow" in lowered or "tmr" in lowered or "tmrw" in lowered:
         return (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
     has_next_week = "next week" in lowered

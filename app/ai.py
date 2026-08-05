@@ -125,11 +125,13 @@ in progress, analyze the customer's message and respond ONLY with JSON matching 
 
 Rules for classification:
 - type MUST BE EXACTLY ONE OF: ASK_INFO, LIST_SERVICES, LIST_PRODUCTS, BOOK_SERVICE, BUY_PRODUCT, CHECK_STATUS, CANCEL_BOOKING, CANCEL_ORDER, RESCHEDULE_BOOKING, CONFIRM_ACTION, CANCEL_ACTION, OUT_OF_SCOPE, OFF_TOPIC. Do not use COMPLAINT as type; use OUT_OF_SCOPE for complaints and set conversation_act to COMPLAINT.
-- BOOK_SERVICE / BUY_PRODUCT: Use when the customer explicitly expresses intent to reserve, book, purchase, or schedule an appointment/order (e.g. "I want to book a haircut", "reserve manicure tomorrow at 2pm", "I'd like to buy shampoo"), OR gives a date/time/quantity for an in-progress booking/order. Set service_name or product_name to the catalog item mentioned.
+- BOOK_SERVICE / BUY_PRODUCT: Use when the customer explicitly expresses intent to reserve, book, purchase, or schedule an appointment/order (e.g. "I want to book a haircut", "reserve manicure tomorrow at 2pm", "I'd like to buy shampoo"), OR gives a date/time/quantity for an in-progress booking/order.
+- service_name MUST be one of the exact names from the Catalog below, or null. NEVER invent or guess a service name from general knowledge (e.g. do NOT output "Pedicure", "Manicure", "Massage" etc. unless they appear in the Catalog). If the customer mentions a service not in the Catalog, set service_name to null and use type ASK_INFO. If the customer is confirming a booking discussed in the Recent conversation (e.g. "yes book it", "let's do tomorrow at 11am"), set service_name to the catalog service name from the conversation context.
+- product_name MUST be one of the exact names from the Catalog below, or null. Same rules as service_name.
 - fulfillment_type: "delivery" or "pickup" if the customer specifies wanting delivery vs store pickup in THIS message, else null.
 - delivery_address: street address / location / landmark if customer provides a delivery address in THIS message, else null.
-- date_text: ONLY the date/day part mentioned in THIS message (e.g. "Thursday", "tomorrow", "25th August"). Do not repeat dates from earlier turns.
-- time_text: ONLY the time-of-day part mentioned in THIS message (e.g. "2pm", "14:00"). Do not repeat times from earlier.
+- date_text: ONLY the date/day part mentioned in THIS message (e.g. "Thursday", "tomorrow", "today", "25th August"). Do not repeat dates from earlier turns.
+- time_text: ONLY the time-of-day part mentioned in THIS message (e.g. "2pm", "14:00", "4:00pm"). Do not repeat times from earlier.
 - quantity: a plain integer if THIS message states a quantity, else null.
 - payment_phone: phone number if customer provides an M-Pesa payment line in THIS message (e.g. "0712345678", "pay via 0711223344"), else null.
 - CANCEL_BOOKING / CANCEL_ORDER: Customer wants to cancel an existing, already-made booking/order.
