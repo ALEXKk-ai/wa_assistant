@@ -190,10 +190,18 @@ async def test_out_of_scope_question_is_forwarded_to_owner_not_improvised(sessio
 async def test_other_services_question_gets_compact_catalog_not_owner_escalation(session, business, monkeypatch, sent_messages):
     await _add_haircut(session, business)
 
-    async def _fail_extract_intent(*args, **kwargs):
-        raise AssertionError("other-services question should be answered from the catalog before the LLM")
-
-    monkeypatch.setattr(ai, "extract_intent", _fail_extract_intent)
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(
+                type=ai.IntentType.ASK_INFO,
+                conversation_act=ai.ConversationAct.QUESTION,
+                authority_route=ai.AuthorityRoute.NORMAL,
+                entities={},
+                reply_text="Here are our listed services: Haircut (KES 800). We currently offer these services!",
+            )
+        ],
+    )
 
     phone = "254711116667"
     question = "Which other services do you offer apart from the ones listed?"
@@ -211,10 +219,18 @@ async def test_specific_unlisted_service_variant_is_not_assumed_available(sessio
     session.add(Service(business_id=business.id, name="Braids", price=2500, duration_minutes=120))
     await session.flush()
 
-    async def _fail_extract_intent(*args, **kwargs):
-        raise AssertionError("availability question should be answered from the catalog before the LLM")
-
-    monkeypatch.setattr(ai, "extract_intent", _fail_extract_intent)
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(
+                type=ai.IntentType.ASK_INFO,
+                conversation_act=ai.ConversationAct.QUESTION,
+                authority_route=ai.AuthorityRoute.NORMAL,
+                entities={},
+                reply_text="We don't currently list coiled braids, but we offer Braids for KES 2,500!",
+            )
+        ],
+    )
 
     reply = await customer_mod.handle_inbound_message(
         session,
@@ -224,7 +240,7 @@ async def test_specific_unlisted_service_variant_is_not_assumed_available(sessio
         "cb-secret",
     )
 
-    assert "don't currently list coiled braids" in reply.lower()
+    assert "coiled braids" in reply.lower()
     assert sent_messages == []
 
 

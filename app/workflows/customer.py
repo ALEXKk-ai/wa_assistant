@@ -88,35 +88,12 @@ _CODE_REQUEST_RE = re.compile(
     r"|\bpython\s+code\b|\bjavascript\s+code\b",
     re.IGNORECASE,
 )
-_OFFER_RE = re.compile(
-    r"\b(?:do\s+you|can\s+i|can\s+we)\s+(?:offer|have|do|get|provide|bring)\s+(?P<item>.+?)(?:\s+(?:in|at|for|there)\b|[?.!]|$)",
-    re.IGNORECASE,
-)
-_AVAILABLE_RE = re.compile(
-    r"\b(?:is|are)\s+(?:there\s+)?(?P<item>.+?)(?:\s+available|\s+offered|\s+there|\s+in\b|\s+at\b|\s+for\b|[?.!]|$)",
-    re.IGNORECASE,
-)
-_PRICE_ITEM_RE = re.compile(
-    r"\b(?:cost\s+of|price\s+of|how\s+much\s+(?:for|is|does)\s+|(?:what\s+is\s+the\s+)?price\s+of\s+)(?P<item>.+?)[?.!]*$",
-    re.IGNORECASE,
-)
 _SIMPLE_GREETING_RE = re.compile(
     r"^\s*(hi|hello|hey|good\s+morning|good\s+afternoon|good\s+evening)\s*[!.]?\s*$",
     re.IGNORECASE,
 )
 _PAYMENT_STATUS_RE = re.compile(
     r"\b(paid|pay|payment|deposit|m-?pesa|mpesa|stk)\b",
-    re.IGNORECASE,
-)
-_UNGROUNDED_INFO_RE = re.compile(
-    r"\b(bring|own|policy|refund|discount|negotiate|custom|proposal|partnership|collaborat|sponsor|complaint|manager|human|owner)\b",
-    re.IGNORECASE,
-)
-_UNLISTED_CATALOG_RE = re.compile(
-    r"\b(?:apart from|besides|other than|outside of|not listed|not on (?:the )?list|unlisted|any other|which other|what other)\b"
-    r".*\b(?:services?|products?|items?|goods)\b"
-    r"|\b(?:services?|products?|items?|goods)\b"
-    r".*\b(?:apart from|besides|other than|outside of|not listed|not on (?:the )?list|unlisted|else)\b",
     re.IGNORECASE,
 )
 _TIME_WITH_MERIDIEM_RE = re.compile(r"\b(?P<hour>\d{1,2})(?::(?P<minute>[0-5]\d))?\s*(?P<period>a\.?m\.?|p\.?m\.?)\b", re.IGNORECASE)
@@ -214,8 +191,6 @@ async def handle_inbound_message(
 
     if direct_reply is None:
         direct_reply = await _direct_pending_booking_reference_reply(session, business, customer, message_text)
-    if direct_reply is None:
-        direct_reply = await _direct_catalog_availability_reply(session, business, message_text)
 
     if direct_reply is not None:
         if isinstance(direct_reply, tuple):
@@ -465,76 +440,6 @@ def _looks_like_weekday_reference(lowered_text: str) -> bool:
 
 
 
-async def _direct_catalog_availability_reply(
-    session: AsyncSession, business: Business, message_text: str
-) -> str | None:
-    """Answer obvious "do you offer X?" questions without asking the LLM to
-    choose between services/products. This keeps a services shop from falling
-    into the goods/product-list response when the requested service is absent."""
-    if _UNLISTED_CATALOG_RE.search(message_text):
-        return await _compact_catalog_text(session, business)
-
-    item = _extract_catalog_item_question(message_text)
-    if not item:
-        return None
-
-    if business.business_type == BusinessType.SERVICES:
-        services = await repo.list_services(session, business.id)
-        match = _find_named_item(item, [s.name for s in services])
-        if match:
-            service = next(s for s in services if s.name == match)
-            return (
-                f"Yes, we offer {service.name} for KES {service.price} "
-                f"({service.duration_minutes} min). Would you like to book it?"
-            )
-        return (
-            f"We don't currently list {item}. "
-            f"{await _list_services_text(session, business)}"
-        )
-
-    products = await repo.list_products(session, business.id)
-    match = _find_named_item(item, [p.name for p in products])
-    if match:
-        product = next(p for p in products if p.name == match)
-        if product.stock_qty <= 0:
-            return f"We do list {product.name}, but it's currently out of stock."
-        return f"Yes, we have {product.name} for KES {product.price}. How many would you like?"
-    return (
-        f"We don't currently list {item}. "
-        f"{await _list_products_text(session, business)}"
-    )
-
-
-def _extract_catalog_item_question(message_text: str) -> str | None:
-    text = message_text.strip()
-    lowered = text.lower()
-    if any(word in lowered for word in ("hours", "address", "location", "located", "open", "close", "operating", "deposit", "payment", "paid", "wrong with", "you stupid", "are you", "wtf", "fool", "dumb", "idiot", "who are", "who is", "where is", "why is", "how is", "champions", "world")):
-        return None
-    if "what" in lowered and ("offer" in lowered or "have" in lowered or "available" in lowered):
-        return None
-
-    match = _OFFER_RE.search(text) or _AVAILABLE_RE.search(text) or _PRICE_ITEM_RE.search(text)
-    if not match:
-        return None
-    item = match.group("item").strip(" ?.!,")
-    noise = ("a ", "an ", "the ")
-    for prefix in noise:
-        if item.lower().startswith(prefix):
-            item = item[len(prefix):]
-            break
-    if item.lower() in ("required", "needed", "for", "is", "are", "cost", "price", "deposit"):
-        return None
-    return item or None
-
-
-def _find_named_item(requested: str, names: list[str]) -> str | None:
-    requested_lower = requested.strip().lower()
-    for name in names:
-        if name.strip().lower() == requested_lower:
-            return name
-    return None
-
-
 def _deterministic_intent(
     message_text: str, stage: str, pending: dict, business: Business
 ) -> ai.Intent | None:
@@ -544,13 +449,6 @@ def _deterministic_intent(
             type=ai.IntentType.OFF_TOPIC,
             entities={},
             reply_text=f"I'm the virtual assistant for {business.name}! I can only assist with our listed services, products, bookings, and operating hours.",
-        )
-    if _UNGROUNDED_INFO_RE.search(message_text):
-        return ai.Intent(
-            type=ai.IntentType.OUT_OF_SCOPE,
-            entities={},
-            conversation_act=ai.ConversationAct.HUMAN_REQUEST,
-            authority_route=ai.AuthorityRoute.OWNER_AUTHORITY_REQUIRED,
         )
 
     if stage not in _ACTIVE_DETAIL_STAGES or pending.get("type") not in _ACTIVE_DETAIL_TYPES:
