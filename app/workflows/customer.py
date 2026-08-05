@@ -737,11 +737,6 @@ async def _pre_route_conversation_act(
         intent.authority_route == ai.AuthorityRoute.OWNER_AUTHORITY_REQUIRED
         or act in _OWNER_AUTHORITY_ACTS
     ):
-        if _extract_catalog_item_question(message_text) is not None:
-            direct_reply = await _direct_catalog_availability_reply(session, business, message_text)
-            if direct_reply is not None:
-                return direct_reply, stage, pending
-
         if not _EXPLICIT_HUMAN_REQUEST_RE.search(message_text):
             if business.business_type == BusinessType.SERVICES:
                 return (
