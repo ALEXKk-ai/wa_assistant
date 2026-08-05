@@ -1111,7 +1111,11 @@ async def _advance_booking(
 
     if service is None:
         if pending.get("service_name"):
-            reply = f"We don't offer '{pending['service_name'].title()}' at {business.name}. " + await _list_services_text(session, business, header="Here are the services we offer:")
+            bad_name = pending["service_name"]
+            reply = f"We don't offer '{bad_name.title()}' at {business.name}. " + await _list_services_text(session, business, header="Here are the services we offer:")
+            # Reset fully — the item doesn't exist, so don't keep the bad
+            # name in pending (it would retrigger on every subsequent message).
+            return reply, STAGE_IDLE, {}
         else:
             reply = "Sure - which service would you like to book?"
         return reply, STAGE_COLLECTING_BOOKING, pending

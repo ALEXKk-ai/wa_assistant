@@ -136,6 +136,7 @@ Rules for classification:
 - payment_phone: phone number if customer provides an M-Pesa payment line in THIS message (e.g. "0712345678", "pay via 0711223344"), else null.
 - CANCEL_BOOKING / CANCEL_ORDER: Customer wants to cancel an existing, already-made booking/order.
 - RESCHEDULE_BOOKING: Customer wants to move an existing booking to a new time.
+- CHECK_STATUS: ONLY use when the customer explicitly asks to see/list their bookings or orders (e.g. "what are my bookings?", "do I have anything upcoming?", "show my orders"). Do NOT use CHECK_STATUS for questions ABOUT a booking process (e.g. "how long until you confirm?", "where are you located?", "what happens if payment fails?") — those are ASK_INFO.
 - CONFIRM_ACTION: Customer agrees to proceed with an in-progress action ("yes", "confirm", "go ahead").
 - CANCEL_ACTION: Customer wants to abandon an in-progress draft action ("nevermind", "stop").
 - conversation_act captures what the message is doing socially: thanks/bye = ACKNOWLEDGEMENT/CLOSING, "I might not make it tomorrow" = UNCERTAIN_ATTENDANCE, "no, I meant 3pm" = CORRECTION, complaints = COMPLAINT, requests for a person = HUMAN_REQUEST, business partnership/wholesale/sponsorship proposals = PROPOSAL.
