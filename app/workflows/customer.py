@@ -1288,6 +1288,18 @@ async def _advance_booking(
     date_text = pending.get("date_text")
     time_text = pending.get("time_text")
 
+    if date_text and not time_text:
+        inferred_time = _extract_time_text(message_text, pending, business) or _extract_time_text(date_text, pending, business)
+        if inferred_time:
+            time_text = inferred_time
+            pending["time_text"] = time_text
+
+    if time_text and not date_text:
+        inferred_date = _extract_date_text(message_text, pending) or _extract_date_text(time_text, pending)
+        if inferred_date:
+            date_text = inferred_date
+            pending["date_text"] = date_text
+
     if not date_text and not time_text:
         return (
             f"Great choice - {service.name} (KES {service.price}, {service.duration_minutes} min). "
@@ -2133,7 +2145,19 @@ def _combine_date_and_time(date_text: str, time_text: str) -> datetime | None:
     date_part = _parse_date_text(date_text)
     if date_part is None:
         return None
-    lowered = (time_text or "").lower()
+    lowered = (time_text or "").lower().strip()
+    
+    if any(c.isdigit() for c in lowered):
+        try:
+            time_part = dateutil_parser.parse(lowered, default=datetime(2000, 1, 1, 0, 0), fuzzy=True)
+            hour = time_part.hour
+            minute = time_part.minute
+            if 1 <= hour <= 7 and "am" not in lowered and "morning" not in lowered:
+                hour += 12
+            return date_part.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        except (ValueError, OverflowError):
+            pass
+
     if "morning" in lowered:
         return date_part.replace(hour=9, minute=0, second=0, microsecond=0)
     if "afternoon" in lowered:
@@ -2141,8 +2165,6 @@ def _combine_date_and_time(date_text: str, time_text: str) -> datetime | None:
     if "evening" in lowered:
         return date_part.replace(hour=17, minute=0, second=0, microsecond=0)
     try:
-        # Parse the time fragment on its own against a neutral default so we
-        # only pull out the hour/minute, then apply those to the resolved date.
         time_part = dateutil_parser.parse(time_text, default=datetime(2000, 1, 1, 0, 0), fuzzy=True)
     except (ValueError, OverflowError):
         return None
