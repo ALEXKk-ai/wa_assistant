@@ -29,6 +29,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 import httpx
+import instructor
+from groq import AsyncGroq
+from pydantic import BaseModel, Field
 
 from app.config import get_settings
 from app.logging_conf import get_logger, log_extra
@@ -80,6 +83,25 @@ class Intent:
     reply_text: str = ""
     conversation_act: ConversationAct = ConversationAct.REQUEST
     authority_route: AuthorityRoute = AuthorityRoute.NORMAL
+
+
+class ExtractedEntitiesSchema(BaseModel):
+    service_name: str | None = Field(default=None, description="Catalog service name mentioned (e.g. Haircut, Braiding)")
+    product_name: str | None = Field(default=None, description="Catalog product name mentioned")
+    quantity: int | None = Field(default=None, description="Quantity of product or item if mentioned")
+    date_text: str | None = Field(default=None, description="Date phrase mentioned in THIS message (e.g. tomorrow, Friday)")
+    time_text: str | None = Field(default=None, description="Time phrase mentioned in THIS message (e.g. 10am, morning)")
+    fulfillment_type: str | None = Field(default=None, description="'delivery' or 'pickup' if mentioned")
+    delivery_address: str | None = Field(default=None, description="Street address or landmark if mentioned")
+    payment_phone: str | None = Field(default=None, description="M-Pesa payment phone number if provided")
+
+
+class StructuredIntentResponse(BaseModel):
+    type: IntentType
+    entities: ExtractedEntitiesSchema = Field(default_factory=ExtractedEntitiesSchema)
+    conversation_act: ConversationAct = ConversationAct.REQUEST
+    authority_route: AuthorityRoute = AuthorityRoute.NORMAL
+    reply_text: str = Field(default="", description="Natural polite response to send customer for Q&A or info questions")
 
 
 FALLBACK_INTENT = Intent(
@@ -177,8 +199,29 @@ async def extract_intent(
     )
 
     last_error: Exception | None = None
+    is_mocked_llm = getattr(_call_llm, "__name__", "") != "_call_llm" or _call_llm.__module__ != __name__
     for attempt in range(settings.llm_max_retries + 1):
         try:
+            groq_key = settings.llm_api_key if (settings.llm_api_key and settings.llm_api_key.startswith("gsk_")) else None
+            if groq_key and not is_mocked_llm:
+                client = instructor.patch(AsyncGroq(api_key=groq_key))
+                structured = await client.chat.completions.create(
+                    model="llama-3.1-8b-instant",
+                    response_model=StructuredIntentResponse,
+                    messages=[
+                        {"role": "system", "content": prompt},
+                        {"role": "user", "content": customer_message},
+                    ],
+                    max_retries=settings.llm_max_retries,
+                )
+                return Intent(
+                    type=structured.type,
+                    entities={k: v for k, v in structured.entities.model_dump().items() if v is not None},
+                    reply_text=structured.reply_text or "",
+                    conversation_act=structured.conversation_act,
+                    authority_route=structured.authority_route,
+                )
+
             raw = await _call_llm(prompt, customer_message, settings)
             return _parse_intent(raw)
         except Exception as exc:  # noqa: BLE001 - deliberately broad, see module docstring

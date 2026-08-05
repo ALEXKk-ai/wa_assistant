@@ -2136,6 +2136,13 @@ def _combine_date_and_time(date_text: str, time_text: str) -> datetime | None:
     date_part = _parse_date_text(date_text)
     if date_part is None:
         return None
+    lowered = (time_text or "").lower()
+    if "morning" in lowered:
+        return date_part.replace(hour=9, minute=0, second=0, microsecond=0)
+    if "afternoon" in lowered:
+        return date_part.replace(hour=14, minute=0, second=0, microsecond=0)
+    if "evening" in lowered:
+        return date_part.replace(hour=17, minute=0, second=0, microsecond=0)
     try:
         # Parse the time fragment on its own against a neutral default so we
         # only pull out the hour/minute, then apply those to the resolved date.
