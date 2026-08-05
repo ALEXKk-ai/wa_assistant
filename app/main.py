@@ -202,15 +202,19 @@ async def healthz(response: Response) -> dict:
 
 
 
+@app.get("/admin/update-business-info")
+@app.post("/admin/update-business-info")
 @app.post("/admin/update-business-mpesa")
-async def update_business_mpesa_endpoint(
+async def update_business_info_endpoint(
     secret: str,
     business_id: int,
-    consumer_key: str,
-    consumer_secret: str,
-    shortcode: str,
-    passkey: str,
     response: Response,
+    owner_phone: str | None = None,
+    consumer_key: str | None = None,
+    consumer_secret: str | None = None,
+    shortcode: str | None = None,
+    passkey: str | None = None,
+    deposit_percentage: float | None = None,
 ) -> dict:
     if not verify_mpesa_callback_secret(secret):
         response.status_code = 403
@@ -223,9 +227,36 @@ async def update_business_mpesa_endpoint(
         if not business:
             response.status_code = 404
             return {"status": "error", "detail": f"Business {business_id} not found"}
-        business.mpesa_shortcode = shortcode
-        business.mpesa_consumer_key_encrypted = encrypt_secret(consumer_key)
-        business.mpesa_consumer_secret_encrypted = encrypt_secret(consumer_secret)
-        business.mpesa_passkey_encrypted = encrypt_secret(passkey)
+
+        updated_fields = []
+        if owner_phone:
+            business.owner_whatsapp_number = owner_phone
+            updated_fields.append("owner_phone")
+        if shortcode:
+            business.mpesa_shortcode = shortcode
+            updated_fields.append("shortcode")
+        if consumer_key:
+            business.mpesa_consumer_key_encrypted = encrypt_secret(consumer_key)
+            updated_fields.append("consumer_key")
+        if consumer_secret:
+            business.mpesa_consumer_secret_encrypted = encrypt_secret(consumer_secret)
+            updated_fields.append("consumer_secret")
+        if passkey:
+            business.mpesa_passkey_encrypted = encrypt_secret(passkey)
+            updated_fields.append("passkey")
+        if deposit_percentage is not None:
+            business.deposit_percentage = deposit_percentage
+            updated_fields.append("deposit_percentage")
+
         await session.commit()
-        return {"status": "ok", "message": f"Updated M-Pesa credentials for business id={business.id} ({business.name})"}
+        return {
+            "status": "ok",
+            "message": f"Updated business id={business.id} ({business.name}): {', '.join(updated_fields or ['no changes'])}",
+            "business": {
+                "id": business.id,
+                "name": business.name,
+                "owner_whatsapp_number": business.owner_whatsapp_number,
+                "mpesa_shortcode": business.mpesa_shortcode,
+                "deposit_percentage": business.deposit_percentage,
+            },
+        }
