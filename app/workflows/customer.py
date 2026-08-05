@@ -620,7 +620,7 @@ async def _direct_catalog_availability_reply(
 def _extract_catalog_item_question(message_text: str) -> str | None:
     text = message_text.strip()
     lowered = text.lower()
-    if any(word in lowered for word in ("hours", "address", "location", "located", "open", "close", "operating", "deposit", "payment", "paid", "wrong with", "you stupid", "are you", "wtf", "fool", "dumb", "idiot")):
+    if any(word in lowered for word in ("hours", "address", "location", "located", "open", "close", "operating", "deposit", "payment", "paid", "wrong with", "you stupid", "are you", "wtf", "fool", "dumb", "idiot", "who are", "who is", "where is", "why is", "how is", "champions", "world")):
         return None
     if "what" in lowered and ("offer" in lowered or "have" in lowered or "available" in lowered):
         return None
@@ -716,7 +716,7 @@ _OWNER_AUTHORITY_ACTS = {
 }
 
 _EXPLICIT_HUMAN_REQUEST_RE = re.compile(
-    r"\b(discount|negotiate|cheaper|refund|complaint|bad|horrible|unhappy|manager|human|person|owner|proposal|partnership|commercial|arrangement|supply|bulk|b2b|collaborat|bring\s+my\s+own|after\s+hours)\b",
+    r"\b(discount|negotiate|cheaper|refund|complaint|bad|horrible|unhappy|manager|management|human|person|owner|admin|talk|speak|proposal|partnership|commercial|arrangement|supply|bulk|b2b|collaborat|bring\s+my\s+own|after\s+hours)\b",
     re.IGNORECASE,
 )
 
