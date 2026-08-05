@@ -88,10 +88,11 @@ class Intent:
 
 class ExtractedEntitiesSchema(BaseModel):
     service_name: str | None = Field(default=None, description="Catalog service name mentioned (e.g. Haircut, Braiding)")
+    service_names: list[str] = Field(default_factory=list, description="List of catalog service names mentioned if multiple (e.g. ['Haircut', 'Hair Coloring'])")
     product_name: str | None = Field(default=None, description="Catalog product name mentioned")
     quantity: int | None = Field(default=None, description="Quantity of product or item if mentioned")
     date_text: str | None = Field(default=None, description="Date phrase mentioned in THIS message (e.g. tomorrow, Friday)")
-    time_text: str | None = Field(default=None, description="Time phrase mentioned in THIS message (e.g. 10am, morning)")
+    time_text: str | None = Field(default=None, description="Time phrase mentioned in THIS message (e.g. 10am, morning, at 2)")
     fulfillment_type: str | None = Field(default=None, description="'delivery' or 'pickup' if mentioned")
     delivery_address: str | None = Field(default=None, description="Street address or landmark if mentioned")
     payment_phone: str | None = Field(default=None, description="M-Pesa payment phone number if provided")
@@ -121,25 +122,21 @@ in progress, analyze the customer's message and respond ONLY with JSON matching 
 {{"type": "ASK_INFO|LIST_SERVICES|LIST_PRODUCTS|BOOK_SERVICE|BUY_PRODUCT|CHECK_STATUS|CANCEL_BOOKING|CANCEL_ORDER|RESCHEDULE_BOOKING|RESEND_DEPOSIT|CONFIRM_ACTION|CANCEL_ACTION|OUT_OF_SCOPE|OFF_TOPIC", \
 "conversation_act": "REQUEST|QUESTION|ACKNOWLEDGEMENT|CLOSING|CORRECTION|UNCERTAIN_ATTENDANCE|COMPLAINT|HUMAN_REQUEST|PROPOSAL|UNCLEAR", \
 "authority_route": "NORMAL|OWNER_AUTHORITY_REQUIRED|OFF_TOPIC|UNCLEAR", \
-"entities": {{"service_name": null, "product_name": null, "quantity": null, "date_text": null, "time_text": null, "fulfillment_type": null, "delivery_address": null, "payment_phone": null}}, \
+"entities": {{"service_name": null, "service_names": [], "product_name": null, "quantity": null, "date_text": null, "time_text": null, "fulfillment_type": null, "delivery_address": null, "payment_phone": null}}, \
 "reply_text": "<natural, friendly reply to send the customer, used for ASK_INFO, LIST_SERVICES, LIST_PRODUCTS, CHECK_STATUS, OFF_TOPIC, and general chat>"}}
 
 Rules for classification:
 - type MUST BE EXACTLY ONE OF: ASK_INFO, LIST_SERVICES, LIST_PRODUCTS, BOOK_SERVICE, BUY_PRODUCT, CHECK_STATUS, CANCEL_BOOKING, CANCEL_ORDER, RESCHEDULE_BOOKING, RESEND_DEPOSIT, CONFIRM_ACTION, CANCEL_ACTION, OUT_OF_SCOPE, OFF_TOPIC. Do not use COMPLAINT as type; use OUT_OF_SCOPE for complaints and set conversation_act to COMPLAINT.
 - BOOK_SERVICE / BUY_PRODUCT: Use when the customer explicitly expresses intent to reserve, book, purchase, or schedule an appointment/order (e.g. "I want to book a haircut", "reserve manicure tomorrow at 2pm", "I'd like to buy shampoo"), OR gives a date/time/quantity for an in-progress booking/order.
-- service_name MUST be one of the exact names from the Catalog below, or null. NEVER invent or guess a service name from general knowledge (e.g. do NOT output "Pedicure", "Manicure", "Massage" etc. unless they appear in the Catalog). If the customer mentions a service not in the Catalog, set service_name to null and use type ASK_INFO. If the customer is confirming a booking discussed in the Recent conversation (e.g. "yes book it", "let's do tomorrow at 11am"), set service_name to the catalog service name from the conversation context.
+- service_name / service_names MUST be exact names from the Catalog below. If the customer mentions multiple services (e.g. "a haircut and hair coloring"), include ALL of them in service_names as a list (e.g. ["Haircut", "Hair Coloring"]) and set service_name to the primary one. NEVER invent or guess service names from general knowledge.
 - product_name MUST be one of the exact names from the Catalog below, or null. Same rules as service_name.
 - fulfillment_type: "delivery" or "pickup" if the customer specifies wanting delivery vs store pickup in THIS message, else null.
 - delivery_address: street address / location / landmark if customer provides a delivery address in THIS message, else null.
 - date_text: ONLY the date/day part mentioned in THIS message (e.g. "Thursday", "tomorrow", "today", "25th August"). Do not repeat dates from earlier turns.
-- time_text: ONLY the time-of-day part mentioned in THIS message (e.g. "2pm", "14:00", "4:00pm"). Do not repeat times from earlier.
+- time_text: ONLY the time-of-day part mentioned in THIS message (e.g. "2pm", "14:00", "4:00pm", "at 2").
 - quantity: a plain integer if THIS message states a quantity, else null.
-- payment_phone: phone number if customer provides an M-Pesa payment line in THIS message (e.g. "0712345678", "pay via 0711223344"), else null.
-- CANCEL_BOOKING / CANCEL_ORDER: Customer wants to cancel an existing, already-made booking/order.
-- RESCHEDULE_BOOKING: Customer wants to move an existing booking to a new time.
-- RESEND_DEPOSIT: Customer asks to resend, retry, or receive an M-Pesa deposit prompt/STK push for an existing booking/order (e.g. "resend prompt", "send an stk push", "retry payment", "didn't get popup", "push to my phone").
-- CHECK_STATUS: ONLY use when the customer explicitly asks to see/list their bookings or orders (e.g. "what are my bookings?", "do I have anything upcoming?", "show my orders"). Do NOT use CHECK_STATUS for questions ABOUT a booking process (e.g. "how long until you confirm?", "where are you located?", "what happens if payment fails?") — those are ASK_INFO.
-- CONFIRM_ACTION: Customer agrees to proceed with an in-progress action ("yes", "confirm", "go ahead").
+- payment_phone: phone number if customer provides an M-Pesa payment line in THIS message (e.g. "0712345678", "0706832905", "pay via 0711223344"), else null.
+- CONFIRM_ACTION: Customer agrees to proceed with an in-progress action ("yes", "confirm", "go ahead") OR provides a phone number while in STAGE_CONFIRMING. If Currently collecting shows an in-progress booking or payment confirmation, any 10-digit/12-digit phone number MUST be classified as CONFIRM_ACTION with payment_phone populated, NOT as UNCERTAIN_ATTENDANCE or ASK_INFO.
 - CANCEL_ACTION: Customer wants to abandon an in-progress draft action ("nevermind", "stop").
 - conversation_act captures what the message is doing socially: thanks/bye = ACKNOWLEDGEMENT/CLOSING, "I might not make it tomorrow" = UNCERTAIN_ATTENDANCE, "no, I meant 3pm" = CORRECTION, complaints = COMPLAINT, requests for a person = HUMAN_REQUEST, business partnership/wholesale/sponsorship proposals = PROPOSAL.
 - authority_route should be OWNER_AUTHORITY_REQUIRED only when the customer asks for something requiring explicit owner/manager decision (proposal, partnership, complaint, custom discount negotiation, refund exception, explicit request for human manager/owner). Keep general business questions, deposit inquiries, operating hours, location, amenities, and catalog availability questions as NORMAL.

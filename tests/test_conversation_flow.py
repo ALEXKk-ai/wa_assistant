@@ -476,3 +476,80 @@ async def test_non_text_message_handling(session, business, sent_messages):
     res_image = await engine.handle_non_text_message(session, business, "254711223344", "image")
     assert "forwarded it to the shop owner" in res_image.lower()
     assert any("sent a photo" in text for to, text in sent_messages if to == business.owner_whatsapp_number)
+
+
+async def test_multi_service_booking_aggregates_totals(session, business, monkeypatch):
+    from app import models
+    await _add_haircut(session, business)
+    # Add second service: Hair Coloring (KES 4000, 90 min)
+    color_svc = models.Service(
+        business_id=business.id,
+        name="Hair Coloring",
+        price=4000.0,
+        duration_minutes=90,
+    )
+    session.add(color_svc)
+    await session.commit()
+
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(
+                type=ai.IntentType.BOOK_SERVICE,
+                entities={
+                    "service_names": ["Haircut", "Hair Coloring"],
+                    "date_text": "Friday",
+                    "time_text": "14:00",
+                },
+            ),
+        ],
+    )
+
+    phone = "254799000111"
+    reply = await customer_mod.handle_inbound_message(session, business, phone, "haircut and hair coloring Friday at 2", "cb-secret")
+    assert "Haircut & Hair Coloring" in reply
+    assert "4,800" in reply
+    assert "2h 15m" in reply
+
+
+async def test_phone_number_input_in_confirming_stage_does_not_wipe_state(session, business, monkeypatch):
+    await _add_haircut(session, business)
+    business.mpesa_shortcode = "174379"
+
+    stk_calls = []
+
+    async def _fake_initiate_deposit(session_, business_, phone, amount, secret, payment_phone=None):
+        stk_calls.append((phone, payment_phone, amount))
+
+        class _FakePayment:
+            id = 888
+
+        return _FakePayment()
+
+    monkeypatch.setattr(customer_mod.payments, "initiate_deposit", _fake_initiate_deposit)
+
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(
+                type=ai.IntentType.BOOK_SERVICE,
+                entities={"service_name": "Haircut", "date_text": "Friday", "time_text": "14:00"},
+            ),
+            ai.Intent(
+                type=ai.IntentType.CONFIRM_ACTION,
+                entities={"payment_phone": "0706832905"},
+                conversation_act=ai.ConversationAct.UNCERTAIN_ATTENDANCE,  # LLM misclassifies act
+            ),
+        ],
+    )
+
+    phone = "254700112233"
+    r1 = await customer_mod.handle_inbound_message(session, business, phone, "haircut Friday 2pm", "cb-secret")
+    assert "Haircut" in r1
+
+    # Customer replies with valid phone number while in STAGE_CONFIRMING
+    r2 = await customer_mod.handle_inbound_message(session, business, phone, "0706832905", "cb-secret")
+    assert "sent" in r2.lower() or "prompt" in r2.lower()
+    assert len(stk_calls) == 1
+    assert stk_calls[0][1] == "0706832905"
+

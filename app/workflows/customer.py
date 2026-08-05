@@ -103,7 +103,44 @@ _TIME_WITH_DAYPART_RE = re.compile(
     re.IGNORECASE,
 )
 _TIME_24H_RE = re.compile(r"^\s*(?P<hour>[01]?\d|2[0-3]):(?P<minute>[0-5]\d)\s*$")
-_BARE_TIME_RE = re.compile(r"^\s*(?P<hour>\d{1,2})(?::(?P<minute>[0-5]\d))?\s*$")
+_BARE_TIME_RE = re.compile(r"\bat\s+(?P<hour>\d{1,2})(?::(?P<minute>[0-5]\d))?\b|^\s*(?P<hour_standalone>\d{1,2})(?::(?P<minute_standalone>[0-5]\d))?\s*$", re.IGNORECASE)
+
+
+def _infer_bare_time_text(message_text: str, pending: dict, business: Business) -> str | None:
+    match = _BARE_TIME_RE.search(message_text)
+    if not match:
+        return None
+
+    hour_str = match.group("hour") or match.group("hour_standalone")
+    minute_str = match.group("minute") or match.group("minute_standalone")
+    hour = int(hour_str)
+    minute = int(minute_str or 0)
+    if hour > 23:
+        return None
+    if hour == 0 or hour > 12:
+        return f"{hour:02d}:{minute:02d}"
+
+    date_part = _parse_date_text(pending.get("date_text") or "")
+    hours = json.loads(business.hours_json or "{}")
+    if date_part is not None and hours and not all(v is None for v in hours.values()):
+        candidates = [hour]
+        if hour < 12:
+            candidates.append(hour + 12)
+        valid = []
+        for candidate_hour in candidates:
+            slot_start = date_part.replace(hour=candidate_hour, minute=minute)
+            slot_end = slot_start + timedelta(minutes=1)
+            ok, _ = hours_mod.is_within_hours(hours, slot_start, slot_end)
+            if ok:
+                valid.append(candidate_hour)
+        if len(valid) == 1:
+            return f"{valid[0]:02d}:{minute:02d}"
+
+    # Human shorthand in booking contexts usually means daytime business
+    # hours: "5" after a date prompt is much more likely to be 5pm than 5am.
+    if 1 <= hour <= 7:
+        hour += 12
+    return f"{hour:02d}:{minute:02d}"
 _DATE_WORDS = {
     "today",
     "tomorrow",
@@ -293,6 +330,21 @@ async def _pre_route_conversation_act(
     stage: str,
     pending: dict,
 ) -> tuple[str, str, dict] | None:
+    # If customer is in STAGE_CONFIRMING and providing a phone number or confirmation reply,
+    # do NOT allow loose social acts (e.g. UNCERTAIN_ATTENDANCE) to hijack or reset the state.
+    digits_in_msg = "".join(c for c in message_text if c.isdigit())
+    is_confirming_input = (
+        stage == STAGE_CONFIRMING
+        and pending
+        and (
+            intent.type in (ai.IntentType.CONFIRM_ACTION, ai.IntentType.RESEND_DEPOSIT)
+            or len(digits_in_msg) >= 9
+            or message_text.strip().lower() in ("yes", "confirm", "ok", "sure", "yep", "yeah", "proceed")
+        )
+    )
+    if is_confirming_input:
+        return None
+
     act = intent.conversation_act
 
     if (
@@ -880,19 +932,42 @@ async def _advance_booking(
     pending["type"] = "booking"
 
     services = await repo.list_services(session, business.id)
-    service = None
-    if pending.get("service_name") and pending.get("service_id"):
-        svc = next((s for s in services if s.id == pending["service_id"]), None)
-        if svc and pending["service_name"].strip().lower() != svc.name.strip().lower() and svc.name.strip().lower() not in pending["service_name"].strip().lower():
-            pending["service_id"] = None
 
-    if pending.get("service_id"):
+    # Support multi-service extraction (e.g. ["Haircut", "Hair Coloring"])
+    raw_service_names = entities.get("service_names") or []
+    if isinstance(raw_service_names, str):
+        raw_service_names = [raw_service_names]
+    if pending.get("service_name") and pending["service_name"] not in raw_service_names:
+        raw_service_names.insert(0, pending["service_name"])
+
+    matched_services = []
+    for s_name in raw_service_names:
+        if not s_name:
+            continue
+        name_clean = s_name.strip().lower()
+        match_svc = next((s for s in services if s.name.strip().lower() == name_clean or name_clean in s.name.lower() or s.name.lower() in name_clean), None)
+        if match_svc and match_svc not in matched_services:
+            matched_services.append(match_svc)
+
+    if matched_services:
+        pending["service_ids"] = [s.id for s in matched_services]
+        pending["service_names"] = [s.name for s in matched_services]
+        pending["service_id"] = matched_services[0].id
+        pending["service_name"] = " & ".join(s.name for s in matched_services)
+
+    services_list = []
+    if pending.get("service_ids"):
+        for sid in pending["service_ids"]:
+            svc_item = next((s for s in services if s.id == sid), None)
+            if svc_item and svc_item not in services_list:
+                services_list.append(svc_item)
+
+    service = services_list[0] if services_list else None
+    if service is None and pending.get("service_id"):
         service = next((s for s in services if s.id == pending["service_id"]), None)
     if service is None and pending.get("service_name"):
         name = pending["service_name"].strip().lower()
-        service = next((s for s in services if s.name.strip().lower() == name), None)
-        if service is None:
-            service = next((s for s in services if name in s.name.lower() or s.name.lower() in name), None)
+        service = next((s for s in services if s.name.strip().lower() == name or name in s.name.lower() or s.name.lower() in name), None)
         if service is not None:
             pending["service_id"] = service.id
 
@@ -904,25 +979,27 @@ async def _advance_booking(
                 pending["service_name"] = s.name
                 break
 
-    # Fix 4: If service is still None and no explicit service_name was given,
-    # try to infer it from the conversation history (e.g. customer discussed
-    # braiding in a previous turn and now says "yes book for tomorrow at 11am")
     if service is None and not pending.get("service_name"):
         service = _infer_service_from_history(history or [], services)
         if service is not None:
             pending["service_id"] = service.id
             pending["service_name"] = service.name
 
-    if service is None:
+    if not services_list and service is not None:
+        services_list = [service]
+
+    if not services_list:
         if pending.get("service_name"):
             bad_name = pending["service_name"]
             reply = f"We don't offer '{bad_name.title()}' at {business.name}. " + await _list_services_text(session, business, header="Here are the services we offer:")
-            # Reset fully — the item doesn't exist, so don't keep the bad
-            # name in pending (it would retrigger on every subsequent message).
             return reply, STAGE_IDLE, {}
         else:
             reply = "Sure - which service would you like to book?"
         return reply, STAGE_COLLECTING_BOOKING, pending
+
+    total_price = sum(float(s.price) for s in services_list)
+    total_duration = sum(s.duration_minutes for s in services_list)
+    combined_name = " & ".join(s.name for s in services_list)
 
     date_text = pending.get("date_text")
     time_text = pending.get("time_text")
@@ -940,8 +1017,9 @@ async def _advance_booking(
             pending["date_text"] = date_text
 
     if not date_text and not time_text:
+        dur_str = f"{total_duration // 60}h {total_duration % 60}m" if total_duration >= 60 else f"{total_duration} min"
         return (
-            f"Great choice - {service.name} (KES {service.price}, {service.duration_minutes} min). "
+            f"Great choice - {combined_name} (KES {_fmt_price(total_price)}, {dur_str}). "
             "What date and time would you like to come in?",
             STAGE_COLLECTING_BOOKING,
             pending,
@@ -981,13 +1059,13 @@ async def _advance_booking(
             pending,
         )
 
-    slot_end = slot_start + timedelta(minutes=service.duration_minutes)
+    slot_end = slot_start + timedelta(minutes=total_duration)
     error = _validate_slot(business, slot_start, slot_end)
     if error:
         pending["time_text"] = None
         return error, STAGE_COLLECTING_BOOKING, pending
 
-    deposit_amount = payments.compute_deposit_amount(business, float(service.price), item=service)
+    deposit_amount = sum(payments.compute_deposit_amount(business, float(s.price), item=s) for s in services_list)
     pending["slot_start_iso"] = slot_start.isoformat()
     if deposit_amount > 0 and business.mpesa_shortcode:
         phone_hint = f" to {pending['payment_phone']}" if pending.get("payment_phone") else ""
@@ -995,12 +1073,12 @@ async def _advance_booking(
     else:
         deposit_text = ".\nNo upfront deposit required — payment will be collected upon arrival. Reply YES to confirm"
 
+    dur_str = f"{total_duration // 60}h {total_duration % 60}m" if total_duration >= 60 else f"{total_duration} min"
     reply = (
-        f"Here's what I have: {service.name} on {slot_start:%A %d %b at %H:%M} "
-        f"(KES {_fmt_price(service.price)}, {service.duration_minutes} min)"
+        f"Here's what I have: {combined_name} on {slot_start:%A %d %b at %H:%M} "
+        f"(KES {_fmt_price(total_price)}, {dur_str})"
         f"{deposit_text}, or let me know if you'd like to change anything."
     )
-    # Fix 5: Append answers to secondary questions the customer asked in the same message
     addendum = _secondary_info_addendum(message_text, business)
     if addendum:
         reply += addendum
