@@ -532,7 +532,15 @@ async def _pre_route_conversation_act(
         await owner_workflow.notify_owner_unanswered_question(
             business, customer_phone, message_text, customer_name=customer.name
         )
-        return "I've passed this to the team. They'll get back to you soon.", stage, pending
+        is_complaint = (
+            act == ai.ConversationAct.COMPLAINT
+            or bool(re.search(r"\b(complaint|bad|horrible|unhappy|late|delay|ruined|disappointed|terrible|worst)\b", message_text, re.IGNORECASE))
+        )
+        if is_complaint:
+            reply = "I'm really sorry to hear that! I've passed this directly to the team so they can look into it, and someone will get back to you shortly."
+        else:
+            reply = "I've passed this to the team. They'll get back to you soon."
+        return reply, stage, pending
 
     if intent.authority_route == ai.AuthorityRoute.UNCLEAR or act == ai.ConversationAct.UNCLEAR:
         return "Could you clarify what you'd like help with?", stage, pending
