@@ -608,7 +608,7 @@ async def _dispatch(
 ) -> tuple[str, str, dict]:
     """Returns (reply_text, new_stage, new_pending)."""
 
-    if intent.type in (ai.IntentType.ASK_INFO, ai.IntentType.LIST_PRODUCTS) and _STOCK_QUESTION_RE.search(message_text):
+    if business.business_type == BusinessType.GOODS and intent.type in (ai.IntentType.ASK_INFO, ai.IntentType.LIST_PRODUCTS) and _STOCK_QUESTION_RE.search(message_text):
         reply = await _answer_stock_request(session, business, customer_phone, message_text, customer_name=customer.name)
         return reply, stage, pending
 
