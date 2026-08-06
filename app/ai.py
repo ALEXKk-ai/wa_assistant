@@ -169,6 +169,39 @@ Recent conversation:
 """
 
 
+_DECISION_SYSTEM_PROMPT = """You are the strict decision router for {business_name}'s WhatsApp assistant.
+Return ONLY JSON matching this schema, no markdown:
+
+{{"primary_action": "START_BOOKING|CONTINUE_BOOKING|CHANGE_BOOKING_FIELD|CONFIRM_PENDING_ACTION|CANCEL_PENDING_ACTION|START_ORDER|CONTINUE_ORDER|ASK_BUSINESS_INFO|ASK_CATALOG|ASK_STOCK|CHECK_STATUS|START_CANCEL_BOOKING|START_CANCEL_ORDER|START_RESCHEDULE_BOOKING|RESEND_DEPOSIT_PROMPT|ESCALATE_TO_OWNER|OFF_TOPIC_BOUNDARY|ASK_CLARIFICATION|SOCIAL_REPLY|FALLBACK",
+"secondary_actions": ["ANSWER_SERVICE_AVAILABILITY|ANSWER_PRODUCT_AVAILABILITY|ANSWER_PRICE|ANSWER_HOURS|NOTIFY_OWNER|PRESERVE_PENDING_CONTEXT"],
+"facts": {{"service_name": null, "service_names": [], "product_name": null, "quantity": null, "date_text": null, "time_text": null, "payment_phone": null, "complaint": false, "cancel_signal": false, "off_topic": false}},
+"state_policy": "preserve|update_pending|clear_pending|ask_before_replacing",
+"needs_owner": false,
+"confidence": 0.0,
+"reason": "<short reason>" }}
+
+Rules:
+- Choose exactly one primary_action. Use secondary_actions only for safe side effects or response enrichment.
+- For services, service_name/service_names must be exact names from Catalog. For goods, product_name must be an exact catalog name.
+- Booking/order facts are facts from THIS message only. Do not copy date/time/quantity from history unless the customer restates it.
+- If a customer gives service + date/time or a correction to an active booking, prefer START_BOOKING/CONTINUE_BOOKING/CHANGE_BOOKING_FIELD over escalation unless there are actual complaint/owner-authority words.
+- OFF_TOPIC_BOUNDARY preserves pending state. CANCEL_PENDING_ACTION requires explicit cancel/stop/nevermind/start over language.
+- ASK_STOCK is for "do you have X", "is X in stock", or restock notification requests. If a restock notification is requested, include NOTIFY_OWNER.
+- ESCALATE_TO_OWNER is only for complaints, refund/discount exceptions, human/manager requests, proposals, or unavailable policy facts.
+- Response wording is NOT your job. Do not invent a customer reply. Only route the turn.
+
+Business type: {business_type}
+Fulfillment Policy: {fulfillment_policy}
+Address & Location: {business_address}
+Extra Info & FAQs: {business_extra_info}
+Catalog: {catalog}
+Operating hours: {business_hours_text}
+Currently collecting: {pending_summary}
+Recent conversation:
+{history_text}
+"""
+
+
 def _format_history(conversation_history: list[dict]) -> str:
     if not conversation_history:
         return "(none yet)"
@@ -270,6 +303,79 @@ async def extract_intent(
     return FALLBACK_INTENT
 
 
+async def extract_turn_decision(
+    customer_message: str,
+    business_name: str,
+    business_type: str,
+    catalog: list[dict],
+    conversation_history: list[dict] | None = None,
+    pending: dict | None = None,
+    business_hours_text: str = "not set - no restrictions",
+    business_address: str = "not listed",
+    business_extra_info: str = "none",
+    fulfillment_policy: str = "both (delivery or store pickup)",
+):
+    """Return the new strict decision schema, falling back to legacy intent."""
+    from app.conversation_decision import (
+        TurnDecisionSchema,
+        decision_from_intent,
+        decision_from_schema,
+        intent_from_decision,
+    )
+
+    # Unit tests and some callers monkeypatch extract_intent; honor that path
+    # so the workflow can be tested deterministically without a network call.
+    is_mocked_intent = getattr(extract_intent, "__name__", "") != "extract_intent" or extract_intent.__module__ != __name__
+    if not is_mocked_intent:
+        settings = get_settings()
+        prompt = _DECISION_SYSTEM_PROMPT.format(
+            business_name=business_name,
+            business_type=business_type,
+            fulfillment_policy=fulfillment_policy,
+            business_address=business_address or "not listed",
+            business_extra_info=business_extra_info or "none",
+            catalog=catalog,
+            business_hours_text=business_hours_text,
+            pending_summary=_format_pending(pending),
+            history_text=_format_history(conversation_history or []),
+        )
+        try:
+            groq_key = settings.llm_api_key if (settings.llm_api_key and settings.llm_api_key.startswith("gsk_")) else None
+            is_mocked_llm = getattr(_call_llm, "__name__", "") != "_call_llm" or _call_llm.__module__ != __name__
+            if groq_key and not is_mocked_llm:
+                client = instructor.patch(AsyncGroq(api_key=groq_key))
+                structured = await client.chat.completions.create(
+                    model="llama-3.1-8b-instant",
+                    response_model=TurnDecisionSchema,
+                    messages=[
+                        {"role": "system", "content": prompt},
+                        {"role": "user", "content": customer_message},
+                    ],
+                    max_retries=settings.llm_max_retries,
+                )
+                decision = decision_from_schema(structured)
+                return intent_from_decision(decision), decision
+            raw = await _call_llm(prompt, customer_message, settings)
+            decision = decision_from_schema(TurnDecisionSchema.model_validate_json(_clean_json(raw)))
+            return intent_from_decision(decision), decision
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Native turn decision failed; falling back to legacy intent", extra=log_extra(error=str(exc)))
+
+    intent = await extract_intent(
+        customer_message=customer_message,
+        business_name=business_name,
+        business_type=business_type,
+        catalog=catalog,
+        conversation_history=conversation_history,
+        pending=pending,
+        business_hours_text=business_hours_text,
+        business_address=business_address,
+        business_extra_info=business_extra_info,
+        fulfillment_policy=fulfillment_policy,
+    )
+    return intent, decision_from_intent(intent)
+
+
 async def _call_llm(system_prompt: str, user_message: str, settings) -> str:
     async with httpx.AsyncClient(timeout=settings.llm_timeout_seconds) as client:
         if settings.llm_provider == "gemini":
@@ -310,7 +416,7 @@ async def _call_llm(system_prompt: str, user_message: str, settings) -> str:
 
 
 def _parse_intent(raw: str) -> Intent:
-    cleaned = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    cleaned = _clean_json(raw)
     parsed = json.loads(cleaned)  # raises on malformed JSON -> caught by caller -> fallback
     intent_type = IntentType(parsed["type"])  # raises on unknown type -> fallback
     return Intent(
@@ -320,3 +426,7 @@ def _parse_intent(raw: str) -> Intent:
         conversation_act=ConversationAct(parsed.get("conversation_act") or ConversationAct.REQUEST.value),
         authority_route=AuthorityRoute(parsed.get("authority_route") or AuthorityRoute.NORMAL.value),
     )
+
+
+def _clean_json(raw: str) -> str:
+    return raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()

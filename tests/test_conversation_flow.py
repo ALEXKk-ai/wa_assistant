@@ -1,8 +1,9 @@
 from datetime import datetime, timedelta
 
 from app import ai
+from app.conversation_decision import DecisionFacts, PrimaryAction, StatePolicy, TurnDecision
 from app.workflows import customer as customer_mod
-from app.models import Service
+from app.models import Product, Service
 
 
 async def _add_haircut(session, business, price=800, duration=45):
@@ -10,6 +11,20 @@ async def _add_haircut(session, business, price=800, duration=45):
     session.add(service)
     await session.flush()
     return service
+
+
+async def _add_manicure(session, business, price=1200, duration=60):
+    service = Service(business_id=business.id, name="Manicure", price=price, duration_minutes=duration)
+    session.add(service)
+    await session.flush()
+    return service
+
+
+async def _add_product(session, business, name="Edge Control", price=500, stock=3):
+    product = Product(business_id=business.id, name=name, price=price, stock_qty=stock)
+    session.add(product)
+    await session.flush()
+    return product
 
 
 def _mock_extract_intent(monkeypatch, responses):
@@ -352,6 +367,274 @@ async def test_owner_authority_route_does_not_require_regex_keyword(session, bus
     assert any(question in t for t in owner_msgs)
 
 
+async def test_booking_entities_override_false_owner_escalation(session, business, monkeypatch, sent_messages):
+    await _add_manicure(session, business)
+    future = _future_booking_entities(days_ahead=10, hour=14)
+    message = f"Can I come for manicure {future['date_text']} at 2pm"
+
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(
+                type=ai.IntentType.OUT_OF_SCOPE,
+                conversation_act=ai.ConversationAct.COMPLAINT,
+                authority_route=ai.AuthorityRoute.OWNER_AUTHORITY_REQUIRED,
+                entities={},
+                reply_text="I'm really sorry to hear that! I've passed this directly to the team.",
+            )
+        ],
+    )
+
+    reply = await customer_mod.handle_inbound_message(
+        session, business, "254711116673", message, "cb-secret"
+    )
+
+    assert "Manicure" in reply
+    assert "YES" in reply or "yes" in reply.lower()
+    assert "sorry to hear" not in reply.lower()
+    owner_msgs = [t for to, t in sent_messages if to == business.owner_whatsapp_number]
+    assert not any(message in t for t in owner_msgs)
+
+
+async def test_off_topic_misclassified_as_cancel_preserves_pending_state(session, business, monkeypatch, sent_messages):
+    await _add_haircut(session, business)
+    future = _future_booking_entities(days_ahead=12, hour=14)
+
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(
+                type=ai.IntentType.BOOK_SERVICE,
+                entities={
+                    "service_name": "Haircut",
+                    "date_text": future["date_text"],
+                    "time_text": future["time_text"],
+                },
+            ),
+            ai.Intent(type=ai.IntentType.CANCEL_ACTION, entities={}, reply_text="No problem, cancelled."),
+        ],
+    )
+
+    phone = "254711116674"
+    await customer_mod.handle_inbound_message(session, business, phone, "haircut 2pm", "cb-secret")
+    reply = await customer_mod.handle_inbound_message(session, business, phone, "what is the weather", "cb-secret")
+
+    assert "still saved" in reply.lower()
+
+    from app import repositories as repo
+    import json
+
+    state_row = await repo.get_conversation_state(session, business.id, phone)
+    state = json.loads(state_row.state_json)
+    assert state["stage"] == customer_mod.STAGE_CONFIRMING
+    assert state["pending"].get("type") == "booking"
+    assert state["pending"].get("service_name") == "Haircut"
+
+
+async def test_pending_state_has_strict_form_metadata(session, business, monkeypatch, sent_messages):
+    await _add_haircut(session, business)
+
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(
+                type=ai.IntentType.BOOK_SERVICE,
+                entities={"service_name": "Haircut", "date_text": "Thursday", "time_text": None},
+            )
+        ],
+    )
+
+    phone = "254711116675"
+    await customer_mod.handle_inbound_message(session, business, phone, "haircut Thursday", "cb-secret")
+
+    from app import repositories as repo
+    import json
+
+    state_row = await repo.get_conversation_state(session, business.id, phone)
+    state = json.loads(state_row.state_json)
+    pending = state["pending"]
+    assert pending["state_version"] == 2
+    assert "time_text" in pending["missing_fields"]
+    assert "service_id" in pending["locked_fields"]
+    assert pending["last_prompt"] == "ask_time"
+
+
+async def test_complaint_while_pending_escalates_but_preserves_booking(session, business, monkeypatch, sent_messages):
+    await _add_haircut(session, business)
+    future = _future_booking_entities(days_ahead=11, hour=14)
+
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(
+                type=ai.IntentType.BOOK_SERVICE,
+                entities={"service_name": "Haircut", "date_text": future["date_text"], "time_text": future["time_text"]},
+            ),
+            ai.Intent(
+                type=ai.IntentType.OUT_OF_SCOPE,
+                conversation_act=ai.ConversationAct.COMPLAINT,
+                authority_route=ai.AuthorityRoute.OWNER_AUTHORITY_REQUIRED,
+                entities={},
+            ),
+        ],
+    )
+
+    phone = "254711116676"
+    await customer_mod.handle_inbound_message(session, business, phone, "haircut 2pm", "cb-secret")
+    reply = await customer_mod.handle_inbound_message(session, business, phone, "stupid", "cb-secret")
+
+    assert "sorry" in reply.lower() or "team" in reply.lower()
+    owner_msgs = [t for to, t in sent_messages if to == business.owner_whatsapp_number]
+    assert any("stupid" in t for t in owner_msgs)
+
+    from app import repositories as repo
+    import json
+
+    state_row = await repo.get_conversation_state(session, business.id, phone)
+    state = json.loads(state_row.state_json)
+    assert state["stage"] == customer_mod.STAGE_CONFIRMING
+    assert state["pending"].get("type") == "booking"
+
+
+async def test_change_time_to_12_asks_noon_or_midnight(session, business, monkeypatch, sent_messages):
+    await _add_haircut(session, business)
+    future = _future_booking_entities(days_ahead=13, hour=14)
+
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(
+                type=ai.IntentType.BOOK_SERVICE,
+                entities={"service_name": "Haircut", "date_text": future["date_text"], "time_text": future["time_text"]},
+            ),
+            ai.Intent(type=ai.IntentType.ASK_INFO, entities={}, reply_text="Sure."),
+        ],
+    )
+
+    phone = "254711116677"
+    await customer_mod.handle_inbound_message(session, business, phone, "haircut 2pm", "cb-secret")
+    reply = await customer_mod.handle_inbound_message(session, business, phone, "change the time to 12", "cb-secret")
+
+    assert "noon" in reply.lower()
+    assert "midnight" in reply.lower()
+
+
+async def test_stock_restock_request_answers_and_notifies_owner(session, goods_business, monkeypatch, sent_messages):
+    await _add_product(session, goods_business, name="Edge Control", price=450, stock=0)
+
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(
+                type=ai.IntentType.ASK_INFO,
+                entities={"product_name": "Edge Control"},
+                reply_text="I don't know.",
+            )
+        ],
+    )
+
+    phone = "254711116678"
+    msg = "Do you have edge control in stock? If not WhatsApp me when you restock"
+    reply = await customer_mod.handle_inbound_message(session, goods_business, phone, msg, "cb-secret")
+
+    assert "out of stock" in reply.lower()
+    assert "restock" in reply.lower()
+    owner_msgs = [t for to, t in sent_messages if to == goods_business.owner_whatsapp_number]
+    assert any(msg in t for t in owner_msgs)
+
+
+async def test_multi_intent_catalog_question_can_start_booking(session, business, monkeypatch, sent_messages):
+    await _add_manicure(session, business)
+
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(
+                type=ai.IntentType.ASK_INFO,
+                entities={},
+                reply_text="Yes, we offer manicure.",
+            )
+        ],
+    )
+
+    reply = await customer_mod.handle_inbound_message(
+        session, business, "254711116679", "Do you have manicure and can I book tomorrow?", "cb-secret"
+    )
+
+    assert "Manicure" in reply
+    assert "what time" in reply.lower()
+
+
+async def test_correction_changes_only_date_and_preserves_time(session, business, monkeypatch, sent_messages):
+    await _add_haircut(session, business)
+    future = _future_booking_entities(days_ahead=14, hour=14)
+
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(
+                type=ai.IntentType.BOOK_SERVICE,
+                entities={"service_name": "Haircut", "date_text": future["date_text"], "time_text": future["time_text"]},
+            ),
+            ai.Intent(type=ai.IntentType.ASK_INFO, entities={}, reply_text="Sure."),
+        ],
+    )
+
+    phone = "254711116680"
+    await customer_mod.handle_inbound_message(session, business, phone, "haircut 2pm", "cb-secret")
+    reply = await customer_mod.handle_inbound_message(session, business, phone, "actually make it Friday", "cb-secret")
+
+    assert "Haircut" in reply
+    assert "14:00" in reply or "2" in reply
+    assert "YES" in reply or "yes" in reply.lower()
+
+
+async def test_vague_change_request_asks_which_field(session, business, monkeypatch, sent_messages):
+    await _add_haircut(session, business)
+    future = _future_booking_entities(days_ahead=15, hour=14)
+
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(
+                type=ai.IntentType.BOOK_SERVICE,
+                entities={"service_name": "Haircut", "date_text": future["date_text"], "time_text": future["time_text"]},
+            ),
+            ai.Intent(type=ai.IntentType.ASK_INFO, entities={}, reply_text="Sure."),
+        ],
+    )
+
+    phone = "254711116681"
+    await customer_mod.handle_inbound_message(session, business, phone, "haircut 2pm", "cb-secret")
+    reply = await customer_mod.handle_inbound_message(session, business, phone, "I want to change it", "cb-secret")
+
+    assert "service" in reply.lower()
+    assert "date" in reply.lower()
+    assert "time" in reply.lower()
+
+
+async def test_low_confidence_destructive_decision_asks_clarification(session, business, monkeypatch, sent_messages):
+    async def _fake_turn_decision(*args, **kwargs):
+        return (
+            ai.Intent(type=ai.IntentType.CANCEL_ACTION, entities={}, reply_text="cancelled"),
+            TurnDecision(
+                primary_action=PrimaryAction.CANCEL_PENDING_ACTION,
+                facts=DecisionFacts(cancel_signal=True),
+                state_policy=StatePolicy.CLEAR_PENDING,
+                confidence=0.2,
+                reason="uncertain cancel",
+            ),
+        )
+
+    monkeypatch.setattr(ai, "extract_turn_decision", _fake_turn_decision)
+
+    reply = await customer_mod.handle_inbound_message(
+        session, business, "254711116682", "maybe do the thing", "cb-secret"
+    )
+
+    assert "clarify" in reply.lower()
+
+
 async def test_cancel_clears_pending_state(session, business, monkeypatch, sent_messages):
     await _add_haircut(session, business)
 
@@ -553,4 +836,3 @@ async def test_phone_number_input_in_confirming_stage_does_not_wipe_state(sessio
     assert "sent" in r2.lower() or "prompt" in r2.lower()
     assert len(stk_calls) == 1
     assert stk_calls[0][1] == "0706832905"
-

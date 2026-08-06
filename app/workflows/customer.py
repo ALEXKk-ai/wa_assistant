@@ -47,6 +47,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import ai, payments
 from app import hours as hours_mod
 from app import repositories as repo
+from app.conversation_state import normalize_pending_form
+from app.conversation_transitions import describe_transition
+from app.conversation_turn import ConversationTurnProcessor, TurnContext
 from app.logging_conf import get_logger, log_extra
 from app.models import (
     Booking,
@@ -59,10 +62,12 @@ from app.models import (
     PaymentStatus,
 )
 from app.repositories import BookingConflictError
+from app.response_generation import ValidatedResponseContract, render_validated_response
 from app.whatsapp import send_business_message
 from app.workflows import owner as owner_workflow
 
 logger = get_logger(__name__)
+turn_processor = ConversationTurnProcessor()
 
 STAGE_IDLE = "idle"
 STAGE_COLLECTING_BOOKING = "collecting_booking"
@@ -96,6 +101,8 @@ _PAYMENT_STATUS_RE = re.compile(
     r"\b(paid|pay|payment|deposit|m-?pesa|mpesa|stk)\b",
     re.IGNORECASE,
 )
+_STOCK_QUESTION_RE = re.compile(r"\b(stock|in\s+stock|available|have|sell|restock|re-?stock)\b", re.IGNORECASE)
+_RESTOCK_NOTIFY_RE = re.compile(r"\b(restock|re-?stock|when\s+you\s+get|notify|whatsapp\s+me|message\s+me)\b", re.IGNORECASE)
 _TIME_WITH_MERIDIEM_RE = re.compile(r"\b(?P<hour>\d{1,2})(?::(?P<minute>[0-5]\d))?\s*(?P<period>a\.?m\.?|p\.?m\.?)\b", re.IGNORECASE)
 _TIME_WITH_DAYPART_RE = re.compile(
     r"\b(?P<hour>\d{1,2})(?::(?P<minute>[0-5]\d))?\s*(?:at\s+|in\s+the\s+)?"
@@ -104,6 +111,13 @@ _TIME_WITH_DAYPART_RE = re.compile(
 )
 _TIME_24H_RE = re.compile(r"^\s*(?P<hour>[01]?\d|2[0-3]):(?P<minute>[0-5]\d)\s*$")
 _BARE_TIME_RE = re.compile(r"\bat\s+(?P<hour>\d{1,2})(?::(?P<minute>[0-5]\d))?\b|^\s*(?P<hour_standalone>\d{1,2})(?::(?P<minute_standalone>[0-5]\d))?\s*$", re.IGNORECASE)
+_CORRECTION_TIME_RE = re.compile(
+    r"\b(?:change|move|make|set|switch)\b.{0,30}?"
+    r"(?:time|it|appointment|booking)?\s*(?:to|at)?\s*"
+    r"(?P<hour>\d{1,2})(?::(?P<minute>[0-5]\d))?\s*$",
+    re.IGNORECASE,
+)
+AMBIGUOUS_12_TIME = "__AMBIGUOUS_12__"
 
 
 def _infer_bare_time_text(message_text: str, pending: dict, business: Business) -> str | None:
@@ -214,7 +228,7 @@ async def handle_inbound_message(
             session,
             business.id,
             customer_phone,
-            json.dumps({"stage": new_stage, "pending": new_pending, "history": history}),
+            json.dumps({"stage": new_stage, "pending": normalize_pending_form(new_stage, new_pending), "history": history}),
         )
         return reply_text
 
@@ -229,38 +243,33 @@ async def handle_inbound_message(
         dep_info = "No deposit is required for bookings; customers pay when they arrive."
     extra_info = f"{dep_info} {extra_info}".strip() if extra_info else dep_info
 
-    intent = await ai.extract_intent(
-        customer_message=message_text,
-        business_name=business.name,
-        business_type=business.business_type.value,
-        catalog=catalog,
-        conversation_history=history[:-1],
-        pending=pending,
-        business_hours_text=hours_mod.format_hours(hours),
-        business_address=business.address_text or "not listed",
-        business_extra_info=extra_info or "none",
-        fulfillment_policy=getattr(business.fulfillment_mode, "value", "both"),
+    extracted_date_text = _extract_date_text(message_text, pending)
+    extracted_time_text = _extract_time_text(message_text, pending, business)
+    processed = await turn_processor.process(
+        TurnContext(
+            business=business,
+            message_text=message_text,
+            stage=stage,
+            pending=pending,
+            history=history[:-1],
+            catalog=catalog,
+            business_hours_text=hours_mod.format_hours(hours),
+            business_address=business.address_text or "not listed",
+            business_extra_info=extra_info or "none",
+            fulfillment_policy=getattr(business.fulfillment_mode, "value", "both"),
+            date_text_signal=extracted_date_text,
+            time_text_signal=extracted_time_text,
+            stage_confirming=STAGE_CONFIRMING,
+            active_detail_stages=_ACTIVE_DETAIL_STAGES,
+        )
     )
-    if intent.type == ai.IntentType.FALLBACK:
-        lowered = message_text.lower()
-        if stage == STAGE_IDLE and re.search(r"\b(book|appointment|reserve)\b", lowered):
-            if not any(w in lowered for w in ("cancel", "reschedule", "status", "check", "my booking", "my bookings", "existing booking")):
-                entities = {}
-                date_text = _extract_date_text(message_text, pending)
-                time_text = _extract_time_text(message_text, pending, business)
-                if date_text:
-                    entities["date_text"] = date_text
-                if time_text:
-                    entities["time_text"] = time_text
-                intent = ai.Intent(type=ai.IntentType.BOOK_SERVICE, entities=entities)
+    intent = processed.intent
 
-    logger.info(
-        "Intent classified",
-        extra=log_extra(business_id=business.id, intent=intent.type.value, stage=stage),
-    )
-    pre_routed = await _pre_route_conversation_act(
-        session, business, customer, customer_phone, message_text, intent, stage, pending
-    )
+    pre_routed = None
+    if not processed.skip_pre_route:
+        pre_routed = await _pre_route_conversation_act(
+            session, business, customer, customer_phone, message_text, intent, stage, pending
+        )
     if pre_routed is not None:
         reply_text, new_stage, new_pending = pre_routed
     else:
@@ -270,12 +279,28 @@ async def handle_inbound_message(
 
     history.append({"role": "bot", "text": reply_text})
     history = history[-MAX_HISTORY_ENTRIES:]
+    saved_pending = normalize_pending_form(new_stage, new_pending)
+    transition = describe_transition(stage, pending, new_stage, saved_pending)
+    logger.info(
+        "Conversation turn completed",
+        extra=log_extra(
+            business_id=business.id,
+            stage_before=stage,
+            stage_after=new_stage,
+            pending_type_before=pending.get("type"),
+            pending_type_after=saved_pending.get("type"),
+            transition=transition.kind,
+            final_action=processed.decision.primary_action.value,
+            policy_reason=processed.policy_reason,
+            reply_preview=reply_text[:120],
+        ),
+    )
 
     await repo.set_conversation_state(
         session,
         business.id,
         customer_phone,
-        json.dumps({"stage": new_stage, "pending": new_pending, "history": history}),
+        json.dumps({"stage": new_stage, "pending": saved_pending, "history": history}),
     )
     return reply_text
 
@@ -467,6 +492,12 @@ def _extract_date_text(message_text: str, pending: dict | None = None) -> str | 
 
 def _extract_time_text(message_text: str, pending: dict, business: Business) -> str | None:
     text = message_text.strip()
+    lowered = text.lower()
+
+    if "noon" in lowered:
+        return "12:00"
+    if "midnight" in lowered:
+        return "00:00"
 
     match = _TIME_WITH_MERIDIEM_RE.search(text)
     if match:
@@ -488,11 +519,20 @@ def _extract_time_text(message_text: str, pending: dict, business: Business) -> 
     if match:
         return f"{int(match.group('hour')):02d}:{match.group('minute')}"
 
+    match = _CORRECTION_TIME_RE.search(text)
+    if match:
+        hour = int(match.group("hour"))
+        minute = int(match.group("minute") or 0)
+        if hour == 12:
+            return AMBIGUOUS_12_TIME
+        if 1 <= hour <= 7:
+            hour += 12
+        return f"{hour:02d}:{minute:02d}"
+
     bare = _infer_bare_time_text(text, pending, business)
     if bare is not None:
         return bare
 
-    lowered = text.lower()
     if "morning" in lowered:
         return "09:00"
     if "afternoon" in lowered:
@@ -508,8 +548,8 @@ def _infer_bare_time_text(message_text: str, pending: dict, business: Business) 
     if not match:
         return None
 
-    hour = int(match.group("hour"))
-    minute = int(match.group("minute") or 0)
+    hour = int(match.group("hour") or match.group("hour_standalone"))
+    minute = int(match.group("minute") or match.group("minute_standalone") or 0)
     if hour > 23:
         return None
     if hour == 0 or hour > 12:
@@ -538,6 +578,19 @@ def _infer_bare_time_text(message_text: str, pending: dict, business: Business) 
     return f"{hour:02d}:{minute:02d}"
 
 
+def _time_needs_clarification(message_text: str, time_text: str | None) -> bool:
+    if time_text == AMBIGUOUS_12_TIME:
+        return True
+    if not time_text:
+        return False
+    lowered = message_text.lower()
+    if "12" not in str(time_text) and not re.search(r"\b12\b", lowered):
+        return False
+    has_disambiguator = any(w in lowered for w in ("noon", "midday", "midnight", "am", "pm", "morning", "afternoon", "evening", "night"))
+    is_correction = bool(re.search(r"\b(change|move|make|set|switch)\b", lowered))
+    return is_correction and not has_disambiguator
+
+
 def _is_valid_kenyan_phone(digits: str) -> bool:
     if not digits:
         return False
@@ -554,6 +607,10 @@ async def _dispatch(
     session, business, customer, customer_phone, message_text, intent, stage, pending, mpesa_callback_secret, history=None
 ) -> tuple[str, str, dict]:
     """Returns (reply_text, new_stage, new_pending)."""
+
+    if intent.type in (ai.IntentType.ASK_INFO, ai.IntentType.LIST_PRODUCTS) and _STOCK_QUESTION_RE.search(message_text):
+        reply = await _answer_stock_request(session, business, customer_phone, message_text, customer_name=customer.name)
+        return reply, stage, pending
 
     if intent.type == ai.IntentType.OFF_TOPIC:
         reply = (
@@ -578,9 +635,9 @@ async def _dispatch(
             return reply, stage, pending
         if intent.type in (ai.IntentType.BOOK_SERVICE, ai.IntentType.BUY_PRODUCT):
             if pending.get("type") == "reschedule_booking":
-                return await _advance_reschedule(session, business, pending, intent.entities)
+                return await _advance_reschedule(session, business, pending, intent.entities, message_text=message_text)
             if pending.get("type") == "booking_time_retry":
-                return await _advance_booking_time_retry(session, business, pending, intent.entities)
+                return await _advance_booking_time_retry(session, business, pending, intent.entities, message_text=message_text)
             entities = dict(intent.entities)
             if not entities.get("service_name"):
                 entities["service_name"] = entities.get("product_name")
@@ -664,9 +721,9 @@ async def _dispatch(
 
     if intent.type == ai.IntentType.BOOK_SERVICE:
         if pending.get("type") == "reschedule_booking":
-            return await _advance_reschedule(session, business, pending, intent.entities)
+            return await _advance_reschedule(session, business, pending, intent.entities, message_text=message_text)
         if pending.get("type") == "booking_time_retry":
-            return await _advance_booking_time_retry(session, business, pending, intent.entities)
+            return await _advance_booking_time_retry(session, business, pending, intent.entities, message_text=message_text)
         return await _advance_booking(session, business, pending, intent.entities, message_text=message_text, history=history)
 
     if intent.type == ai.IntentType.BUY_PRODUCT:
@@ -864,12 +921,66 @@ async def _grounded_info_reply(
                 return f"{product.name} is KES {product.price} and is {stock_note}."
 
     await owner_workflow.notify_owner_unanswered_question(
-        business, customer_phone, message_text, customer_name=customer.name
+        business, customer_phone, message_text, customer_name=None
     )
     return (
         "I don't have that information listed here, so I've passed your question "
         "to the team and they'll get back to you soon."
     )
+
+
+def _find_named_item(message_text: str, names: list[str]) -> str | None:
+    lowered = message_text.lower()
+    matches = [name for name in names if name and name.lower() in lowered]
+    if not matches:
+        return None
+    return max(matches, key=len)
+
+
+async def _answer_stock_request(
+    session: AsyncSession,
+    business: Business,
+    customer_phone: str,
+    message_text: str,
+    customer_name: str | None = None,
+) -> str:
+    products = await repo.list_products(session, business.id)
+    if not products:
+        await owner_workflow.notify_owner_unanswered_question(
+            business, customer_phone, message_text, customer_name=customer_name
+        )
+        return (
+            "I don't have product stock information listed here right now, so I've passed this to the team "
+            "and they'll get back to you soon."
+        )
+
+    names = [p.name for p in products]
+    matched_name = _find_named_item(message_text, names)
+    restock_request = bool(_RESTOCK_NOTIFY_RE.search(message_text))
+    if matched_name:
+        product = next(p for p in products if p.name == matched_name)
+        stock_text = (
+            f"Yes, {product.name} is in stock at KES {_fmt_price(product.price)}."
+            if product.stock_qty > 0
+            else f"{product.name} is currently out of stock."
+        )
+        if restock_request:
+            await owner_workflow.notify_owner_unanswered_question(
+                business, customer_phone, message_text, customer_name=customer_name
+            )
+            stock_text += " I've passed your restock follow-up request to the team."
+        return stock_text
+
+    listed = ", ".join(names)
+    if restock_request:
+        await owner_workflow.notify_owner_unanswered_question(
+            business, customer_phone, message_text, customer_name=customer_name
+        )
+        return (
+            f"I don't see that product in the listed catalog. Current products: {listed}. "
+            "I've passed your restock/request note to the team."
+        )
+    return f"I don't see that product in the listed catalog. Current products: {listed}."
 
 
 async def _check_status_text(session: AsyncSession, business: Business, customer) -> str:
@@ -975,8 +1086,12 @@ async def _advance_booking(
     message_text: str = "",
     history: list[dict] | None = None,
 ):
+    old_date_text = pending.get("date_text")
+    old_time_text = pending.get("time_text")
     pending = _merge_entities(pending, entities, ["service_name", "date_text", "time_text", "payment_phone"])
     pending["type"] = "booking"
+    if pending.get("date_text") != old_date_text or pending.get("time_text") != old_time_text:
+        pending.pop("slot_start_iso", None)
 
     services = await repo.list_services(session, business.id)
 
@@ -1051,6 +1166,15 @@ async def _advance_booking(
     date_text = pending.get("date_text")
     time_text = pending.get("time_text")
 
+    if _time_needs_clarification(message_text, time_text):
+        pending["time_text"] = None
+        pending.pop("slot_start_iso", None)
+        return (
+            "Did you mean 12:00 noon or midnight? Please reply with '12 noon' or 'midnight'.",
+            STAGE_COLLECTING_BOOKING,
+            pending,
+        )
+
     if date_text and not time_text:
         inferred_time = _extract_time_text(message_text, pending, business) or _extract_time_text(date_text, pending, business)
         if inferred_time:
@@ -1083,7 +1207,7 @@ async def _advance_booking(
                 pending,
             )
         return (
-            f"Got it, {parsed_date:%A %d %b} - what time works for you?",
+            f"Got it, {combined_name} on {parsed_date:%A %d %b} - what time works for you?",
             STAGE_COLLECTING_BOOKING,
             pending,
         )
@@ -1121,10 +1245,19 @@ async def _advance_booking(
         deposit_text = ".\nNo upfront deposit required — payment will be collected upon arrival. Reply YES to confirm"
 
     dur_str = f"{total_duration // 60}h {total_duration % 60}m" if total_duration >= 60 else f"{total_duration} min"
-    reply = (
-        f"Here's what I have: {combined_name} on {slot_start:%A %d %b at %H:%M} "
-        f"(KES {_fmt_price(total_price)}, {dur_str})"
-        f"{deposit_text}, or let me know if you'd like to change anything."
+    reply = render_validated_response(
+        ValidatedResponseContract(
+            purpose="booking_summary",
+            allowed_facts={
+                "service": combined_name,
+                "slot": f"{slot_start:%A %d %b at %H:%M}",
+                "price": f"KES {_fmt_price(total_price)}",
+                "duration": dur_str,
+                "deposit_text": deposit_text,
+            },
+            required_next_step="Ask the customer to reply YES to confirm.",
+            forbidden_claims=["Do not say payment is complete.", "Do not say the owner confirmed."],
+        )
     )
     addendum = _secondary_info_addendum(message_text, business)
     if addendum:
@@ -1217,12 +1350,29 @@ async def _advance_order(session: AsyncSession, business: Business, pending: dic
         f"Here's what I have: {quantity} x {product.name} (KES {_fmt_price(total)} total) — {fulfillment_str}"
         f"{deposit_text}, or let me know if you'd like to change anything."
     )
+    reply = render_validated_response(
+        ValidatedResponseContract(
+            purpose="order_summary",
+            allowed_facts={
+                "summary": f"{quantity} x {product.name} (KES {_fmt_price(total)} total) - {fulfillment_str}",
+                "deposit_text": deposit_text,
+            },
+            required_next_step="Ask the customer to reply YES to confirm.",
+            forbidden_claims=["Do not say payment is complete.", "Do not reduce stock yet."],
+        )
+    )
     return reply, STAGE_CONFIRMING, pending
 
 
-async def _advance_reschedule(session: AsyncSession, business: Business, pending: dict, entities: dict):
+async def _advance_reschedule(
+    session: AsyncSession, business: Business, pending: dict, entities: dict, message_text: str = ""
+):
+    old_date_text = pending.get("date_text")
+    old_time_text = pending.get("time_text")
     pending = _merge_entities(pending, entities, ["date_text", "time_text"])
     pending["type"] = "reschedule_booking"
+    if pending.get("date_text") != old_date_text or pending.get("time_text") != old_time_text:
+        pending.pop("new_slot_start_iso", None)
 
     booking = await repo.get_booking_for_business(session, business.id, pending.get("booking_id"))
     if booking is None or booking.status not in (
@@ -1237,6 +1387,15 @@ async def _advance_reschedule(session: AsyncSession, business: Business, pending
 
     date_text = pending.get("date_text")
     time_text = pending.get("time_text")
+
+    if _time_needs_clarification(message_text, time_text):
+        pending["time_text"] = None
+        pending.pop("new_slot_start_iso", None)
+        return (
+            "Did you mean 12:00 noon or midnight? Please reply with '12 noon' or 'midnight'.",
+            STAGE_COLLECTING_RESCHEDULE,
+            pending,
+        )
 
     if not date_text and not time_text:
         return "What date and time would you like to move it to?", STAGE_COLLECTING_RESCHEDULE, pending
@@ -1280,11 +1439,15 @@ async def _advance_reschedule(session: AsyncSession, business: Business, pending
 
 
 async def _advance_booking_time_retry(
-    session: AsyncSession, business: Business, pending: dict, entities: dict
+    session: AsyncSession, business: Business, pending: dict, entities: dict, message_text: str = ""
 ):
     """Collect a new date/time for an existing booking after owner soft-rejected."""
+    old_date_text = pending.get("date_text")
+    old_time_text = pending.get("time_text")
     pending = _merge_entities(pending, entities, ["date_text", "time_text"])
     pending["type"] = "booking_time_retry"
+    if pending.get("date_text") != old_date_text or pending.get("time_text") != old_time_text:
+        pending.pop("slot_start_iso", None)
 
     service = await repo.get_service_for_business(session, business.id, pending.get("service_id"))
     if service is None:
@@ -1292,6 +1455,15 @@ async def _advance_booking_time_retry(
 
     date_text = pending.get("date_text")
     time_text = pending.get("time_text")
+
+    if _time_needs_clarification(message_text, time_text):
+        pending["time_text"] = None
+        pending.pop("slot_start_iso", None)
+        return (
+            "Did you mean 12:00 noon or midnight? Please reply with '12 noon' or 'midnight'.",
+            STAGE_COLLECTING_TIME_RETRY,
+            pending,
+        )
 
     if not date_text and not time_text:
         return "What date and time would you like instead?", STAGE_COLLECTING_TIME_RETRY, pending
