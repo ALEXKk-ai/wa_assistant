@@ -698,6 +698,9 @@ async def _dispatch(
                 return f"Our hours are: {hours_mod.format_hours(hours)}", stage, pending
         return status_text, stage, pending
     if intent.type == ai.IntentType.ASK_INFO:
+        lowered = message_text.lower()
+        if _SIMPLE_GREETING_RE.search(message_text):
+            return f"Hello! Welcome to {business.name}. How can I help you with our services, products, or bookings today?", stage, pending
         # For hours-related questions, ALWAYS use DB-sourced hours instead of
         # trusting the LLM's reply_text which can paraphrase incorrectly.
         lowered = message_text.lower()
@@ -930,6 +933,9 @@ async def _grounded_info_reply(
                 product = next(p for p in products if p.name == match)
                 stock_note = "currently in stock" if product.stock_qty > 0 else "currently out of stock"
                 return f"{product.name} is KES {product.price} and is {stock_note}."
+
+    if _SIMPLE_GREETING_RE.search(message_text):
+        return f"Hello! Welcome to {business.name}. How can I help you with our services, products, or bookings today?"
 
     await owner_workflow.notify_owner_unanswered_question(
         business, customer_phone, message_text, customer_name=None

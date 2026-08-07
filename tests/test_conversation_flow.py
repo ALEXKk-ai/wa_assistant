@@ -976,3 +976,22 @@ async def test_multipart_message_appends_secondary_location_addendum(session, bu
     assert "We're located at" in reply or "located" in reply.lower()
 
 
+async def test_social_reply_greeting_returns_welcome_without_owner_alert(session, business, monkeypatch, sent_messages):
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(
+                type=ai.IntentType.ASK_INFO,
+                conversation_act=ai.ConversationAct.REQUEST,
+            ),
+        ],
+    )
+
+    phone = "254799887766"
+    reply = await customer_mod.handle_inbound_message(session, business, phone, "Hello", "cb-secret")
+    assert "Hello" in reply or "Welcome" in reply
+    assert "don't have that information" not in reply
+    owner_msgs = [t for to, t in sent_messages if to == business.owner_whatsapp_number]
+    assert len(owner_msgs) == 0
+
+
