@@ -8,7 +8,7 @@ booking/order/payment handlers remain in place.
 from dataclasses import dataclass
 
 from app import ai
-from app.conversation_decision import PrimaryAction, StatePolicy, decision_from_intent
+from app.conversation_decision import PrimaryAction, StatePolicy
 from app.conversation_decision import TurnDecision
 from app.conversation_policy import PolicyResult, apply_turn_policy
 from app.logging_conf import get_logger, log_extra
@@ -58,7 +58,7 @@ class ConversationTurnProcessor:
             fulfillment_policy=context.fulfillment_policy,
         )
 
-        intent, decision = self._fallback_booking_recovery(intent, decision, context)
+        intent = self._fallback_booking_recovery(intent, context)
         intent, decision = self._repair_low_confidence(intent, decision, context)
         logger.info(
             "Intent classified",
@@ -70,7 +70,7 @@ class ConversationTurnProcessor:
             ),
         )
 
-        policy = self._apply_policy(intent, decision, context)
+        policy = self._apply_policy(intent, context)
         if policy.intent is not intent or policy.skip_pre_route:
             logger.info(
                 "Conversation policy applied",
@@ -90,10 +90,9 @@ class ConversationTurnProcessor:
             policy_reason=policy.reason,
         )
 
-    def _apply_policy(self, intent: ai.Intent, decision: TurnDecision, context: TurnContext) -> PolicyResult:
+    def _apply_policy(self, intent: ai.Intent, context: TurnContext) -> PolicyResult:
         return apply_turn_policy(
             intent=intent,
-            decision=decision,
             message_text=context.message_text,
             business_type=context.business.business_type,
             stage=context.stage,
@@ -105,28 +104,25 @@ class ConversationTurnProcessor:
             active_detail_stages=context.active_detail_stages,
         )
 
-    def _fallback_booking_recovery(
-        self, intent: ai.Intent, decision: TurnDecision, context: TurnContext
-    ) -> tuple[ai.Intent, TurnDecision]:
+    def _fallback_booking_recovery(self, intent: ai.Intent, context: TurnContext) -> ai.Intent:
         if intent.type != ai.IntentType.FALLBACK:
-            return intent, decision
+            return intent
         lowered = context.message_text.lower()
         if context.stage != "idle" or not context.business.business_type == BusinessType.SERVICES:
-            return intent, decision
+            return intent
         if not any(word in lowered for word in ("book", "appointment", "reserve")):
-            return intent, decision
+            return intent
         if any(
             word in lowered
             for word in ("cancel", "reschedule", "status", "check", "my booking", "my bookings", "existing booking")
         ):
-            return intent, decision
+            return intent
         entities = {}
         if context.date_text_signal:
             entities["date_text"] = context.date_text_signal
         if context.time_text_signal:
             entities["time_text"] = context.time_text_signal
-        recovered = ai.Intent(type=ai.IntentType.BOOK_SERVICE, entities=entities)
-        return recovered, decision_from_intent(recovered)
+        return ai.Intent(type=ai.IntentType.BOOK_SERVICE, entities=entities)
 
     def _repair_low_confidence(
         self, intent: ai.Intent, decision: TurnDecision, context: TurnContext

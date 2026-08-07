@@ -47,7 +47,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import ai, payments
 from app import hours as hours_mod
 from app import repositories as repo
-from app.conversation_decision import PrimaryAction, TurnDecision
 from app.conversation_state import normalize_pending_form
 from app.conversation_transitions import describe_transition
 from app.conversation_turn import ConversationTurnProcessor, TurnContext
@@ -266,19 +265,17 @@ async def handle_inbound_message(
     )
     intent = processed.intent
 
-    reply_text, new_stage, new_pending = await _dispatch_decision(
-        session,
-        business,
-        customer,
-        customer_phone,
-        message_text,
-        processed.decision,
-        intent,
-        stage,
-        pending,
-        mpesa_callback_secret,
-        history,
-    )
+    pre_routed = None
+    if not processed.skip_pre_route:
+        pre_routed = await _pre_route_conversation_act(
+            session, business, customer, customer_phone, message_text, intent, stage, pending
+        )
+    if pre_routed is not None:
+        reply_text, new_stage, new_pending = pre_routed
+    else:
+        reply_text, new_stage, new_pending = await _dispatch(
+            session, business, customer, customer_phone, message_text, intent, stage, pending, mpesa_callback_secret, history
+        )
 
     history.append({"role": "bot", "text": reply_text})
     history = history[-MAX_HISTORY_ENTRIES:]
@@ -604,188 +601,6 @@ def _is_valid_kenyan_phone(digits: str) -> bool:
     if (digits.startswith("7") or digits.startswith("1")) and len(digits) == 9:
         return True
     return False
-
-
-def _entities_from_decision(decision: TurnDecision) -> dict:
-    facts = decision.facts
-    entities = {
-        "service_name": facts.service_name,
-        "service_names": facts.service_names,
-        "product_name": facts.product_name,
-        "quantity": facts.quantity,
-        "date_text": facts.date_text,
-        "time_text": facts.time_text,
-        "payment_phone": facts.payment_phone,
-    }
-    return {k: v for k, v in entities.items() if v not in (None, "", [])}
-
-
-async def _dispatch_decision(
-    session,
-    business,
-    customer,
-    customer_phone,
-    message_text,
-    decision: TurnDecision,
-    legacy_intent,
-    stage,
-    pending,
-    mpesa_callback_secret,
-    history=None,
-) -> tuple[str, str, dict]:
-    """Dispatch by TurnDecision.primary_action. Legacy intent is only used
-    for fallback reply text during the migration away from Intent."""
-    action = decision.primary_action
-    entities = _entities_from_decision(decision)
-
-    if action == PrimaryAction.OFF_TOPIC_BOUNDARY:
-        reply = (
-            legacy_intent.reply_text
-            or f"I'm the virtual assistant for {business.name}! I can only assist with our listed services, products, bookings, and operating hours. How can I help you with your visit today?"
-        )
-        return reply, stage, pending
-
-    if action == PrimaryAction.ESCALATE_TO_OWNER:
-        await owner_workflow.notify_owner_unanswered_question(
-            business, customer_phone, message_text, customer_name=customer.name
-        )
-        if decision.facts.complaint:
-            reply = "I'm really sorry to hear that! I've passed this directly to the team so they can look into it, and someone will get back to you shortly."
-        else:
-            reply = "I've passed this to the team. They'll get back to you soon."
-        return reply, stage, pending
-
-    if action == PrimaryAction.ASK_CLARIFICATION:
-        return legacy_intent.reply_text or "Could you clarify what you'd like help with?", stage, pending
-
-    if action == PrimaryAction.HANDLE_UNCERTAIN_ATTENDANCE:
-        return await _uncertain_attendance_reply(session, business, customer, message_text, legacy_intent)
-
-    if action == PrimaryAction.SOCIAL_REPLY:
-        if stage != STAGE_IDLE or pending:
-            return "No problem. Reply YES to confirm, or tell me what to change.", stage, pending
-        lowered = message_text.strip().lower()
-        if any(w in lowered for w in ("bye", "goodbye", "later")):
-            return "No problem. Message us anytime.", STAGE_IDLE, {}
-        return "You're welcome.", STAGE_IDLE, {}
-
-    if action == PrimaryAction.ASK_STOCK:
-        reply = await _answer_stock_request(session, business, customer_phone, message_text, customer_name=customer.name)
-        return reply, stage, pending
-
-    if business.business_type == BusinessType.GOODS and action in (PrimaryAction.ASK_BUSINESS_INFO, PrimaryAction.ASK_CATALOG) and _STOCK_QUESTION_RE.search(message_text):
-        reply = await _answer_stock_request(session, business, customer_phone, message_text, customer_name=customer.name)
-        return reply, stage, pending
-
-    if action == PrimaryAction.ASK_CATALOG:
-        if business.business_type == BusinessType.SERVICES:
-            reply = legacy_intent.reply_text or await _list_services_text(session, business)
-        else:
-            reply = legacy_intent.reply_text or await _list_products_text(session, business)
-        return reply, stage, pending
-
-    if action == PrimaryAction.ASK_BUSINESS_INFO:
-        lowered = message_text.lower()
-        is_hours_question = any(w in lowered for w in (
-            "hour", "open", "close", "closed", "closing", "available",
-        ))
-        has_day_ref = _extract_date_text(message_text, pending) is not None
-        if is_hours_question or has_day_ref:
-            hours = json.loads(business.hours_json or "{}")
-            if has_day_ref:
-                date_text = _extract_date_text(message_text, pending)
-                parsed = _parse_date_text(date_text) if date_text else None
-                if parsed is not None:
-                    from app.hours import DAYS, DAY_NAMES
-                    day_key = DAYS[parsed.weekday()]
-                    day_info = hours.get(day_key)
-                    day_name = DAY_NAMES[day_key]
-                    if day_info is None:
-                        reply = f"Sorry, we're closed on {day_name}s. Our hours are: {hours_mod.format_hours(hours)}"
-                    else:
-                        reply = f"Yes, we're open on {day_name} from {day_info['open']} to {day_info['close']}!"
-                    return reply, stage, pending
-            return f"Our hours are: {hours_mod.format_hours(hours)}", stage, pending
-        if legacy_intent.reply_text:
-            return legacy_intent.reply_text, stage, pending
-        return await _grounded_info_reply(session, business, customer_phone, message_text), stage, pending
-
-    if action == PrimaryAction.CHECK_STATUS:
-        status_text = await _check_status_text(session, business, customer)
-        if status_text.startswith("You don't have any upcoming"):
-            lowered = message_text.lower()
-            has_date = _extract_date_text(message_text, pending) is not None
-            has_avail = any(w in lowered for w in ("open", "available", "close", "hour"))
-            catalog_names = [item.get("name", "").lower() for item in await _build_catalog_summary(session, business)]
-            has_service = any(n and n in lowered for n in catalog_names)
-            if has_date and has_service:
-                return await _advance_booking(session, business, pending, entities, message_text=message_text, history=history)
-            if has_date or has_avail:
-                hours = json.loads(business.hours_json or "{}")
-                return f"Our hours are: {hours_mod.format_hours(hours)}", stage, pending
-        return status_text, stage, pending
-
-    if action in (PrimaryAction.START_BOOKING, PrimaryAction.CONTINUE_BOOKING, PrimaryAction.CHANGE_BOOKING_FIELD):
-        if business.business_type != BusinessType.SERVICES:
-            if not entities.get("product_name"):
-                entities["product_name"] = entities.get("service_name")
-            return await _advance_order(session, business, pending, entities)
-        if pending.get("type") == "reschedule_booking":
-            return await _advance_reschedule(session, business, pending, entities, message_text=message_text)
-        if pending.get("type") == "booking_time_retry":
-            return await _advance_booking_time_retry(session, business, pending, entities, message_text=message_text)
-        if not entities.get("service_name"):
-            entities["service_name"] = entities.get("product_name")
-        return await _advance_booking(session, business, pending, entities, message_text=message_text, history=history)
-
-    if action in (PrimaryAction.START_ORDER, PrimaryAction.CONTINUE_ORDER):
-        if business.business_type == BusinessType.SERVICES:
-            if not entities.get("service_name"):
-                entities["service_name"] = entities.get("product_name")
-            return await _advance_booking(session, business, pending, entities, message_text=message_text, history=history)
-        if not entities.get("product_name"):
-            entities["product_name"] = entities.get("service_name")
-        return await _advance_order(session, business, pending, entities)
-
-    if action == PrimaryAction.RESEND_DEPOSIT_PROMPT:
-        return await _start_resend_deposit(session, business, customer, legacy_intent)
-
-    if action == PrimaryAction.START_CANCEL_BOOKING:
-        return await _start_cancel_booking(session, business, customer)
-
-    if action == PrimaryAction.START_CANCEL_ORDER:
-        return await _start_cancel_order(session, business, customer)
-
-    if action == PrimaryAction.START_RESCHEDULE_BOOKING:
-        if business.business_type != BusinessType.SERVICES:
-            return "Rescheduling isn't available for orders - please contact us directly.", STAGE_IDLE, {}
-        return await _start_reschedule_booking(session, business, customer)
-
-    digits_in_msg = "".join(c for c in message_text if c.isdigit())
-    if action == PrimaryAction.CONFIRM_PENDING_ACTION or (stage == STAGE_CONFIRMING and len(digits_in_msg) >= 9):
-        if stage == STAGE_CONFIRMING and pending:
-            if len(digits_in_msg) >= 9:
-                if not _is_valid_kenyan_phone(digits_in_msg):
-                    return (
-                        "That phone number looks invalid - please reply with a valid 10-digit M-Pesa phone number (e.g. 0712345678) or reply YES to use your main number.",
-                        STAGE_CONFIRMING,
-                        pending,
-                    )
-                pending["payment_phone"] = digits_in_msg
-            reply = await _finalize_pending_action(
-                session, business, customer, customer_phone, pending, mpesa_callback_secret
-            )
-            return reply, STAGE_IDLE, {}
-        return legacy_intent.reply_text or "Sure - what would you like to confirm?", stage, pending
-
-    if action == PrimaryAction.CANCEL_PENDING_ACTION:
-        if pending.get("type") in ("cancel_booking", "cancel_order"):
-            return "Okay, I won't cancel it after all.", STAGE_IDLE, {}
-        if pending:
-            return "No problem, I've cancelled that request - let me know if you'd like to start over.", STAGE_IDLE, {}
-        return legacy_intent.reply_text or "No problem at all! Feel free to reach out whenever you need anything. Have a great day!", STAGE_IDLE, {}
-
-    return legacy_intent.reply_text or ai.FALLBACK_INTENT.reply_text, stage, pending
 
 
 async def _dispatch(
@@ -2331,10 +2146,7 @@ def _combine_date_and_time(date_text: str, time_text: str) -> datetime | None:
             minute = time_part.minute
             if 1 <= hour <= 7 and "am" not in lowered and "morning" not in lowered:
                 hour += 12
-            combined = date_part.replace(hour=hour, minute=minute, second=0, microsecond=0)
-            if combined < datetime.now() and re.fullmatch(r"\s*(mon|tue|wed|thu|fri|sat|sun|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s*", date_text, re.IGNORECASE):
-                combined += timedelta(days=7)
-            return combined
+            return date_part.replace(hour=hour, minute=minute, second=0, microsecond=0)
         except (ValueError, OverflowError):
             pass
 
@@ -2348,7 +2160,4 @@ def _combine_date_and_time(date_text: str, time_text: str) -> datetime | None:
         time_part = dateutil_parser.parse(time_text, default=datetime(2000, 1, 1, 0, 0), fuzzy=True)
     except (ValueError, OverflowError):
         return None
-    combined = date_part.replace(hour=time_part.hour, minute=time_part.minute, second=0, microsecond=0)
-    if combined < datetime.now() and re.fullmatch(r"\s*(mon|tue|wed|thu|fri|sat|sun|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s*", date_text, re.IGNORECASE):
-        combined += timedelta(days=7)
-    return combined
+    return date_part.replace(hour=time_part.hour, minute=time_part.minute, second=0, microsecond=0)
