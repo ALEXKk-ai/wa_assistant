@@ -519,6 +519,10 @@ def _extract_time_text(message_text: str, pending: dict, business: Business) -> 
     if match:
         return f"{int(match.group('hour')):02d}:{match.group('minute')}"
 
+    bare = _infer_bare_time_text(text, pending, business)
+    if bare is not None:
+        return bare
+
     match = _CORRECTION_TIME_RE.search(text)
     if match:
         hour = int(match.group("hour"))
@@ -528,10 +532,6 @@ def _extract_time_text(message_text: str, pending: dict, business: Business) -> 
         if 1 <= hour <= 7:
             hour += 12
         return f"{hour:02d}:{minute:02d}"
-
-    bare = _infer_bare_time_text(text, pending, business)
-    if bare is not None:
-        return bare
 
     if "morning" in lowered:
         return "09:00"
