@@ -277,6 +277,17 @@ async def handle_inbound_message(
             session, business, customer, customer_phone, message_text, intent, stage, pending, mpesa_callback_secret, history
         )
 
+    # Post-dispatch addendum layer: Scan for secondary questions in multi-part messages
+    addendum = _secondary_info_addendum(message_text, business)
+    if addendum:
+        # Check line by line to avoid duplicate information
+        new_lines = []
+        for line in addendum.strip().split("\n"):
+            if line and line not in reply_text:
+                new_lines.append(line)
+        if new_lines:
+            reply_text += "\n\n" + "\n".join(new_lines)
+
     history.append({"role": "bot", "text": reply_text})
     history = history[-MAX_HISTORY_ENTRIES:]
     saved_pending = normalize_pending_form(new_stage, new_pending)
@@ -1033,6 +1044,12 @@ def _secondary_info_addendum(message_text: str, business: Business) -> str:
             parts.append("💳 Yes, we accept M-Pesa payments!")
         else:
             parts.append("💳 Payment is collected at the shop.")
+
+    # Operating hours question (if not already answered in reply)
+    if any(w in lowered for w in ("hour", "hours", "closing time", "opening time", "open on")) and "hours" not in lowered:
+        hours = json.loads(business.hours_json or "{}")
+        if hours:
+            parts.append(f"🕒 Our hours are: {hours_mod.format_hours(hours)}")
 
     # Deposit question (only if not already covered by the booking confirmation)
     if any(w in lowered for w in ("deposit", "upfront", "pay first", "pay before")):

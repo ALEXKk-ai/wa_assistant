@@ -955,3 +955,24 @@ async def test_info_intent_during_active_booking_is_not_overridden_to_booking(se
     assert "Haircut on Saturday" not in reply
 
 
+async def test_multipart_message_appends_secondary_location_addendum(session, business, monkeypatch):
+    business.address_text = "123 Main Street"
+    await session.commit()
+    await _add_haircut(session, business)
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(
+                type=ai.IntentType.BOOK_SERVICE,
+                entities={"service_name": "Haircut"},
+            ),
+        ],
+    )
+
+    phone = "254700112233"
+    reply = await customer_mod.handle_inbound_message(session, business, phone, "Where are you located and I'd like to book a haircut", "cb-secret")
+    assert "Haircut" in reply
+    assert "What date and time" in reply or "what time" in reply.lower()
+    assert "We're located at" in reply or "located" in reply.lower()
+
+
