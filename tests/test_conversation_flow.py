@@ -875,3 +875,30 @@ async def test_closed_day_clears_pending_date_text(session, business, monkeypatc
     state = json.loads(state_row.state_json)
     assert state["pending"].get("date_text") is None
 
+
+async def test_unlisted_service_does_not_fallback_to_history(session, business, monkeypatch):
+    import json
+    from app import repositories as repo
+    await _add_haircut(session, business)
+
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(
+                type=ai.IntentType.BOOK_SERVICE,
+                entities={"service_name": "Manicure", "date_text": "tomorrow"},
+            ),
+        ],
+    )
+
+    phone = "254700998899"
+    reply = await customer_mod.handle_inbound_message(session, business, phone, "I want to come for manicure tomorrow", "cb-secret")
+    assert "don't offer 'Manicure'" in reply or "don't offer" in reply.lower()
+    assert "Haircut" not in reply or "Here are the services we offer:" in reply
+
+    state_row = await repo.get_conversation_state(session, business.id, phone)
+    state = json.loads(state_row.state_json)
+    assert state["stage"] == customer_mod.STAGE_IDLE
+    assert state["pending"] == {}
+
+

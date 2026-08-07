@@ -1098,13 +1098,34 @@ async def _advance_booking(
     services = await repo.list_services(session, business.id)
 
     # Support multi-service extraction (e.g. ["Haircut", "Hair Coloring"])
-    raw_service_names = entities.get("service_names") or []
-    if isinstance(raw_service_names, str):
-        raw_service_names = [raw_service_names]
+    turn_service_names = entities.get("service_names") or []
+    if isinstance(turn_service_names, str):
+        turn_service_names = [turn_service_names]
+    if entities.get("service_name") and entities["service_name"] not in turn_service_names:
+        turn_service_names.insert(0, entities["service_name"])
+
+    # If customer explicitly named service(s) in THIS turn, check if any match catalog
+    explicit_turn_request = bool(turn_service_names)
+    matched_services = []
+    for s_name in turn_service_names:
+        if not s_name:
+            continue
+        name_clean = s_name.strip().lower()
+        match_svc = next((s for s in services if s.name.strip().lower() == name_clean or name_clean in s.name.lower() or s.name.lower() in name_clean), None)
+        if match_svc and match_svc not in matched_services:
+            matched_services.append(match_svc)
+
+    # If customer explicitly requested a service name that is NOT in the catalog, reject it immediately.
+    # Do NOT fall back to pending state or conversation history to substitute a different service.
+    if explicit_turn_request and not matched_services:
+        bad_name = turn_service_names[0]
+        reply = f"We don't offer '{bad_name.title()}' at {business.name}. " + await _list_services_text(session, business, header="Here are the services we offer:")
+        return reply, STAGE_IDLE, {}
+
+    raw_service_names = list(turn_service_names)
     if pending.get("service_name") and pending["service_name"] not in raw_service_names:
         raw_service_names.insert(0, pending["service_name"])
 
-    matched_services = []
     for s_name in raw_service_names:
         if not s_name:
             continue
@@ -1135,7 +1156,7 @@ async def _advance_booking(
         if service is not None:
             pending["service_id"] = service.id
 
-    if service is None:
+    if service is None and not explicit_turn_request:
         for s in services:
             if s.name.lower() in (message_text or "").lower():
                 service = s
@@ -1143,7 +1164,7 @@ async def _advance_booking(
                 pending["service_name"] = s.name
                 break
 
-    if service is None and not pending.get("service_name"):
+    if service is None and not pending.get("service_name") and not explicit_turn_request:
         service = _infer_service_from_history(history or [], services)
         if service is not None:
             pending["service_id"] = service.id
