@@ -341,12 +341,24 @@ async def extract_turn_decision(
             history_text=_format_history(conversation_history or []),
         )
         try:
-            groq_key = settings.llm_api_key if (settings.llm_api_key and settings.llm_api_key.startswith("gsk_")) else None
             is_mocked_llm = getattr(_call_llm, "__name__", "") != "_call_llm" or _call_llm.__module__ != __name__
+            gemini_key = settings.gemini_api_key or (settings.llm_api_key if settings.llm_provider == "gemini" else None)
+            groq_key = settings.llm_api_key if (settings.llm_api_key and settings.llm_api_key.startswith("gsk_")) else None
+
+            # Primary: Gemini
+            if (gemini_key or settings.llm_provider == "gemini") and not is_mocked_llm:
+                try:
+                    raw = await _call_llm(prompt, customer_message, settings)
+                    decision = decision_from_schema(TurnDecisionSchema.model_validate_json(_clean_json(raw)))
+                    return intent_from_decision(decision), decision
+                except Exception as exc:
+                    logger.warning("Gemini primary turn decision failed; attempting Groq fallback", extra=log_extra(error=str(exc)))
+
+            # Fallback: Groq with llama-3.3-70b-versatile
             if groq_key and not is_mocked_llm:
                 client = instructor.patch(AsyncGroq(api_key=groq_key))
                 structured = await client.chat.completions.create(
-                    model="llama-3.1-8b-instant",
+                    model="llama-3.3-70b-versatile",
                     response_model=TurnDecisionSchema,
                     messages=[
                         {"role": "system", "content": prompt},
@@ -356,6 +368,7 @@ async def extract_turn_decision(
                 )
                 decision = decision_from_schema(structured)
                 return intent_from_decision(decision), decision
+
             raw = await _call_llm(prompt, customer_message, settings)
             decision = decision_from_schema(TurnDecisionSchema.model_validate_json(_clean_json(raw)))
             return intent_from_decision(decision), decision
@@ -379,9 +392,14 @@ async def extract_turn_decision(
 
 async def _call_llm(system_prompt: str, user_message: str, settings) -> str:
     async with httpx.AsyncClient(timeout=settings.llm_timeout_seconds) as client:
-        if settings.llm_provider == "gemini":
-            url = settings.llm_api_base.split("?")[0]
-            headers = {"x-goog-api-key": settings.llm_api_key}
+        if settings.llm_provider == "gemini" or settings.gemini_api_key:
+            api_key = settings.gemini_api_key or settings.llm_api_key
+            url = settings.llm_api_base.split("?")[0] if settings.llm_api_base else "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+            if "key=" not in url and api_key:
+                url = f"{url}?key={api_key}"
+            headers = {"Content-Type": "application/json"}
+            if api_key:
+                headers["x-goog-api-key"] = api_key
             resp = await client.post(
                 url,
                 headers=headers,
@@ -406,6 +424,8 @@ async def _call_llm(system_prompt: str, user_message: str, settings) -> str:
             }
             if settings.llm_model:
                 payload["model"] = settings.llm_model
+            else:
+                payload["model"] = "llama-3.3-70b-versatile"
             headers = {"Authorization": f"Bearer {settings.llm_api_key}"}
             if "openrouter.ai" in url:
                 headers["HTTP-Referer"] = "https://localhost"
