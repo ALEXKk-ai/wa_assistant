@@ -635,6 +635,37 @@ async def test_low_confidence_destructive_decision_asks_clarification(session, b
     assert "clarify" in reply.lower()
 
 
+async def test_turn_decision_primary_action_drives_flow_over_legacy_intent(session, business, monkeypatch, sent_messages):
+    await _add_haircut(session, business)
+    future = _future_booking_entities(days_ahead=16, hour=14)
+
+    async def _fake_turn_decision(*args, **kwargs):
+        return (
+            ai.Intent(type=ai.IntentType.OFF_TOPIC, entities={}, reply_text="I can only help with the shop."),
+            TurnDecision(
+                primary_action=PrimaryAction.START_BOOKING,
+                facts=DecisionFacts(
+                    service_name="Haircut",
+                    date_text=future["date_text"],
+                    time_text=future["time_text"],
+                ),
+                state_policy=StatePolicy.UPDATE_PENDING,
+                confidence=0.95,
+                reason="native decision wins",
+            ),
+        )
+
+    monkeypatch.setattr(ai, "extract_turn_decision", _fake_turn_decision)
+
+    reply = await customer_mod.handle_inbound_message(
+        session, business, "254711116683", "book haircut", "cb-secret"
+    )
+
+    assert "Haircut" in reply
+    assert "YES" in reply or "yes" in reply.lower()
+    assert "only help" not in reply.lower()
+
+
 async def test_cancel_clears_pending_state(session, business, monkeypatch, sent_messages):
     await _add_haircut(session, business)
 

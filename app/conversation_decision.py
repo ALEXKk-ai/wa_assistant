@@ -36,6 +36,7 @@ class PrimaryAction(str, Enum):
     ESCALATE_TO_OWNER = "ESCALATE_TO_OWNER"
     OFF_TOPIC_BOUNDARY = "OFF_TOPIC_BOUNDARY"
     ASK_CLARIFICATION = "ASK_CLARIFICATION"
+    HANDLE_UNCERTAIN_ATTENDANCE = "HANDLE_UNCERTAIN_ATTENDANCE"
     SOCIAL_REPLY = "SOCIAL_REPLY"
     FALLBACK = "FALLBACK"
 
@@ -148,6 +149,7 @@ def intent_from_decision(decision: TurnDecision) -> ai.Intent:
         PrimaryAction.ESCALATE_TO_OWNER: ai.IntentType.OUT_OF_SCOPE,
         PrimaryAction.OFF_TOPIC_BOUNDARY: ai.IntentType.OFF_TOPIC,
         PrimaryAction.ASK_CLARIFICATION: ai.IntentType.ASK_INFO,
+        PrimaryAction.HANDLE_UNCERTAIN_ATTENDANCE: ai.IntentType.ASK_INFO,
         PrimaryAction.SOCIAL_REPLY: ai.IntentType.ASK_INFO,
         PrimaryAction.FALLBACK: ai.IntentType.FALLBACK,
     }
@@ -194,6 +196,16 @@ def decision_from_intent(intent: ai.Intent) -> TurnDecision:
         ai.IntentType.FALLBACK: PrimaryAction.FALLBACK,
     }
     primary = mapping.get(intent.type, PrimaryAction.FALLBACK)
+    if (
+        intent.type != ai.IntentType.CONFIRM_ACTION
+        and intent.conversation_act == ai.ConversationAct.UNCERTAIN_ATTENDANCE
+    ):
+        primary = PrimaryAction.HANDLE_UNCERTAIN_ATTENDANCE
+    elif (
+        intent.type not in (ai.IntentType.CONFIRM_ACTION, ai.IntentType.CANCEL_ACTION)
+        and intent.conversation_act in (ai.ConversationAct.ACKNOWLEDGEMENT, ai.ConversationAct.CLOSING)
+    ):
+        primary = PrimaryAction.SOCIAL_REPLY
 
     if primary in (PrimaryAction.START_BOOKING, PrimaryAction.START_ORDER):
         state_policy = StatePolicy.UPDATE_PENDING

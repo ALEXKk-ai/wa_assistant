@@ -15,7 +15,6 @@ from app.conversation_decision import (
     SecondaryAction,
     StatePolicy,
     TurnDecision,
-    decision_from_intent,
 )
 from app.models import BusinessType
 
@@ -107,9 +106,21 @@ def _with_extracted_facts(
     return fixed
 
 
+def _sync_decision_facts(decision: TurnDecision, intent: ai.Intent) -> None:
+    entities = intent.entities or {}
+    decision.facts.service_name = entities.get("service_name") or decision.facts.service_name
+    decision.facts.service_names = list(entities.get("service_names") or decision.facts.service_names or [])
+    decision.facts.product_name = entities.get("product_name") or decision.facts.product_name
+    decision.facts.quantity = entities.get("quantity") or decision.facts.quantity
+    decision.facts.date_text = entities.get("date_text") or decision.facts.date_text
+    decision.facts.time_text = entities.get("time_text") or decision.facts.time_text
+    decision.facts.payment_phone = entities.get("payment_phone") or decision.facts.payment_phone
+
+
 def apply_turn_policy(
     *,
     intent: ai.Intent,
+    decision: TurnDecision,
     message_text: str,
     business_type: BusinessType,
     stage: str,
@@ -120,7 +131,6 @@ def apply_turn_policy(
     stage_confirming: str,
     active_detail_stages: set[str],
 ) -> PolicyResult:
-    decision = decision_from_intent(intent)
     lowered = message_text.lower()
     complaint_signal = bool(_COMPLAINT_RE.search(message_text))
     off_topic_signal = bool(_OFF_TOPIC_RE.search(message_text))
@@ -144,12 +154,18 @@ def apply_turn_policy(
 
     # A pending confirmation has its own deterministic confirmation/phone guard
     # in customer.py.  Do not let social pre-routing intercept it.
-    if stage == stage_confirming and intent.type == ai.IntentType.CONFIRM_ACTION:
+    if stage == stage_confirming and decision.primary_action == PrimaryAction.CONFIRM_PENDING_ACTION:
         decision.primary_action = PrimaryAction.CONFIRM_PENDING_ACTION
         decision.state_policy = StatePolicy.PRESERVE
         return PolicyResult(intent=intent, decision=decision, skip_pre_route=True, reason="confirming input")
 
-    if intent.type in (ai.IntentType.BOOK_SERVICE, ai.IntentType.BUY_PRODUCT) and not complaint_signal:
+    if decision.primary_action in (
+        PrimaryAction.START_BOOKING,
+        PrimaryAction.CONTINUE_BOOKING,
+        PrimaryAction.CHANGE_BOOKING_FIELD,
+        PrimaryAction.START_ORDER,
+        PrimaryAction.CONTINUE_ORDER,
+    ) and not complaint_signal:
         decision.state_policy = StatePolicy.UPDATE_PENDING
         return PolicyResult(
             intent=intent,
@@ -168,6 +184,7 @@ def apply_turn_policy(
                 date_text=date_text_signal,
                 time_text=time_text_signal,
             )
+            _sync_decision_facts(decision, fixed)
             decision.primary_action = PrimaryAction.CHANGE_BOOKING_FIELD
             decision.state_policy = StatePolicy.UPDATE_PENDING
             return PolicyResult(
@@ -185,6 +202,7 @@ def apply_turn_policy(
                 date_text=date_text_signal,
                 time_text=time_text_signal,
             )
+            _sync_decision_facts(decision, fixed)
             decision.primary_action = PrimaryAction.CHANGE_BOOKING_FIELD
             decision.state_policy = StatePolicy.UPDATE_PENDING
             return PolicyResult(
@@ -199,6 +217,7 @@ def apply_turn_policy(
         and pending
         and pending.get("type") not in ("cancel_booking", "cancel_order")
         and correction_signal
+        and not explicit_cancel
         and not detail_fact
         and not complaint_signal
     ):
@@ -219,7 +238,7 @@ def apply_turn_policy(
     # Only explicit draft-cancel language may clear pending state.  Off-topic
     # chatter or vague model uncertainty should preserve the active request.
     if (
-        intent.type == ai.IntentType.CANCEL_ACTION
+        decision.primary_action == PrimaryAction.CANCEL_PENDING_ACTION
         and pending
         and pending.get("type") not in ("cancel_booking", "cancel_order")
         and not explicit_cancel
@@ -243,11 +262,12 @@ def apply_turn_policy(
     # the message actually contains complaint/owner-authority language.
     booking_signal = (catalog_signal or service_fact) and (booking_phrase or has_date_signal or has_time_signal)
     order_signal = (catalog_signal or product_fact) and (buy_phrase or (business_type == BusinessType.GOODS and order_phrase and not stock_only))
-    can_override_escalation = not complaint_signal and intent.type in {
-        ai.IntentType.OUT_OF_SCOPE,
-        ai.IntentType.OFF_TOPIC,
-        ai.IntentType.FALLBACK,
-        ai.IntentType.ASK_INFO,
+    can_override_escalation = not complaint_signal and decision.primary_action in {
+        PrimaryAction.ESCALATE_TO_OWNER,
+        PrimaryAction.OFF_TOPIC_BOUNDARY,
+        PrimaryAction.FALLBACK,
+        PrimaryAction.ASK_BUSINESS_INFO,
+        PrimaryAction.ASK_CLARIFICATION,
     }
     if business_type == BusinessType.SERVICES and booking_signal and can_override_escalation:
         fixed = _with_extracted_facts(
@@ -258,6 +278,7 @@ def apply_turn_policy(
             date_text=date_text_signal,
             time_text=time_text_signal,
         )
+        _sync_decision_facts(decision, fixed)
         decision.primary_action = PrimaryAction.START_BOOKING
         decision.secondary_actions.append(SecondaryAction.ANSWER_SERVICE_AVAILABILITY)
         decision.state_policy = StatePolicy.UPDATE_PENDING
@@ -278,6 +299,7 @@ def apply_turn_policy(
             date_text=date_text_signal,
             time_text=time_text_signal,
         )
+        _sync_decision_facts(decision, fixed)
         decision.primary_action = PrimaryAction.START_ORDER
         decision.secondary_actions.append(SecondaryAction.ANSWER_PRODUCT_AVAILABILITY)
         decision.state_policy = StatePolicy.UPDATE_PENDING
@@ -323,5 +345,10 @@ def apply_turn_policy(
         decision.secondary_actions.append(SecondaryAction.PRESERVE_PENDING_CONTEXT)
         decision.state_policy = StatePolicy.PRESERVE
         return PolicyResult(intent=fixed, decision=decision, skip_pre_route=True, reason="off-topic preserves pending")
+
+    if decision.needs_owner or decision.facts.complaint:
+        decision.primary_action = PrimaryAction.ESCALATE_TO_OWNER
+        decision.state_policy = StatePolicy.PRESERVE
+        return PolicyResult(intent=_clone_intent(intent, type_=ai.IntentType.OUT_OF_SCOPE), decision=decision)
 
     return PolicyResult(intent=intent, decision=decision)
