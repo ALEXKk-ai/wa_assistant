@@ -127,8 +127,8 @@ def apply_turn_policy(
     explicit_cancel = bool(_EXPLICIT_CANCEL_RE.search(message_text))
     catalog_signal = _catalog_mentioned(message_text, catalog_names)
     matched_name = _matched_catalog_name(message_text, catalog_names)
-    has_date_signal = date_text_signal is not None
-    has_time_signal = time_text_signal is not None
+    has_date_signal = date_text_signal is not None or _has_fact_value(decision.facts.date_text)
+    has_time_signal = time_text_signal is not None or _has_fact_value(decision.facts.time_text)
     booking_phrase = bool(_BOOKING_PHRASE_RE.search(message_text))
     order_phrase = bool(_ORDER_PHRASE_RE.search(message_text))
     buy_phrase = bool(_BUY_PHRASE_RE.search(message_text))

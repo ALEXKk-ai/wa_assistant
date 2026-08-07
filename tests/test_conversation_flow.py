@@ -902,3 +902,24 @@ async def test_unlisted_service_does_not_fallback_to_history(session, business, 
     assert state["pending"] == {}
 
 
+async def test_ask_info_with_date_does_not_trigger_hours_without_hours_keyword(session, business, monkeypatch):
+    from app import ai
+    from app.workflows import customer as customer_mod
+
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(
+                type=ai.IntentType.ASK_INFO,
+                entities={"date_text": "tomorrow"},
+                reply_text="We have a full team available for custom requests tomorrow!",
+            ),
+        ],
+    )
+
+    phone = "254700887766"
+    reply = await customer_mod.handle_inbound_message(session, business, phone, "I want to come for manicure, pedicure and toes cleaning tomorrow", "cb-secret")
+    assert "Yes, we're open on" not in reply
+    assert "We have a full team available" in reply
+
+

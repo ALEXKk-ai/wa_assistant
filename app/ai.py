@@ -182,12 +182,13 @@ Return ONLY JSON matching this schema, no markdown:
 
 Rules:
 - Choose exactly one primary_action. Use secondary_actions only for safe side effects or response enrichment.
-- For services, service_name/service_names must be exact names from Catalog. For goods, product_name must be an exact catalog name.
-- Booking/order facts are facts from THIS message only. Do not copy date/time/quantity from history unless the customer restates it.
+- For services, service_name/service_names must be exact names from Catalog. For goods, product_name must be an exact catalog name. If unlisted service is requested, extract date_text/time_text but do NOT substitute catalog names into service_name.
+- Booking/order facts are facts from THIS message only. Extract date_text and time_text exactly as spoken when present. Do not copy date/time/quantity from history unless the customer restates it.
+- If a customer asks about prices, discounts, or deals (e.g. "Can I get a discount"), use ASK_CATALOG or ASK_BUSINESS_INFO with secondary_actions ["ANSWER_PRICE"]. Do NOT mark complaint=true unless there is actual expression of dissatisfaction or bad service.
 - If a customer gives service + date/time or a correction to an active booking, prefer START_BOOKING/CONTINUE_BOOKING/CHANGE_BOOKING_FIELD over escalation unless there are actual complaint/owner-authority words.
 - OFF_TOPIC_BOUNDARY preserves pending state. CANCEL_PENDING_ACTION requires explicit cancel/stop/nevermind/start over language.
 - ASK_STOCK is for "do you have X", "is X in stock", or restock notification requests. If a restock notification is requested, include NOTIFY_OWNER.
-- ESCALATE_TO_OWNER is only for complaints, refund/discount exceptions, human/manager requests, proposals, or unavailable policy facts.
+- ESCALATE_TO_OWNER is only for explicit complaints, refund exceptions, human/manager requests, proposals, or unavailable policy facts.
 - Response wording is NOT your job. Do not invent a customer reply. Only route the turn.
 
 Business type: {business_type}
