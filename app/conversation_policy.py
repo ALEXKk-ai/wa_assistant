@@ -292,7 +292,14 @@ def apply_turn_policy(
     # When a detail-collection flow is active, service/date/time/quantity facts
     # should continue that flow instead of being intercepted as unclear or
     # owner-required.  Complaints still escalate, but state is preserved.
-    if stage in active_detail_stages and detail_fact and not complaint_signal:
+    info_or_status_intent = intent.type in {
+        ai.IntentType.ASK_INFO,
+        ai.IntentType.LIST_SERVICES,
+        ai.IntentType.LIST_PRODUCTS,
+        ai.IntentType.CHECK_STATUS,
+        ai.IntentType.OFF_TOPIC,
+    }
+    if stage in active_detail_stages and detail_fact and not complaint_signal and not info_or_status_intent:
         if pending.get("type") in ("booking", "reschedule_booking", "booking_time_retry"):
             fixed_type = ai.IntentType.BOOK_SERVICE
             primary = PrimaryAction.CONTINUE_BOOKING

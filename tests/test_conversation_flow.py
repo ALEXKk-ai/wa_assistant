@@ -923,3 +923,35 @@ async def test_ask_info_with_date_does_not_trigger_hours_without_hours_keyword(s
     assert "We have a full team available" in reply
 
 
+async def test_info_intent_during_active_booking_is_not_overridden_to_booking(session, business, monkeypatch):
+    import json
+    from app import repositories as repo
+
+    # Set state in active booking stage
+    phone = "254712345678"
+    await repo.set_conversation_state(
+        session,
+        business.id,
+        phone,
+        json.dumps({
+            "stage": customer_mod.STAGE_COLLECTING_BOOKING,
+            "pending": {"type": "booking", "service_name": "Haircut"},
+            "history": [],
+        }),
+    )
+
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(
+                type=ai.IntentType.ASK_INFO,
+                entities={"date_text": "Sunday"},
+            ),
+        ],
+    )
+
+    reply = await customer_mod.handle_inbound_message(session, business, phone, "What time do you close on Sunday?", "cb-secret")
+    assert "closed on Sundays" in reply or "hours" in reply.lower()
+    assert "Haircut on Saturday" not in reply
+
+
