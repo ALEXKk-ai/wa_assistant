@@ -574,15 +574,18 @@ async def test_correction_changes_only_date_and_preserves_time(session, business
         [
             ai.Intent(
                 type=ai.IntentType.BOOK_SERVICE,
-                entities={"service_name": "Haircut", "date_text": future["date_text"], "time_text": future["time_text"]},
+                entities={"service_name": "Haircut", "date_text": "18 August 2026", "time_text": "14:00"},
             ),
-            ai.Intent(type=ai.IntentType.ASK_INFO, entities={}, reply_text="Sure."),
+            ai.Intent(
+                type=ai.IntentType.BOOK_SERVICE,
+                entities={"date_text": "18 August 2026"},
+            ),
         ],
     )
 
     phone = "254711116680"
     await customer_mod.handle_inbound_message(session, business, phone, "haircut 2pm", "cb-secret")
-    reply = await customer_mod.handle_inbound_message(session, business, phone, "actually make it Friday", "cb-secret")
+    reply = await customer_mod.handle_inbound_message(session, business, phone, "make it 18 August 2026", "cb-secret")
 
     assert "Haircut" in reply
     assert "14:00" in reply or "2" in reply
@@ -643,15 +646,15 @@ async def test_cancel_clears_pending_state(session, business, monkeypatch, sent_
         [
             ai.Intent(
                 type=ai.IntentType.BOOK_SERVICE,
-                entities={"service_name": "Haircut", "date_text": "Thursday", "time_text": "2pm"},
+                entities={"service_name": "Haircut", "date_text": "18 August 2026", "time_text": "2pm"},
             ),
             ai.Intent(type=ai.IntentType.CANCEL_ACTION, entities={}),
         ],
     )
 
     phone = "254711117777"
-    await customer_mod.handle_inbound_message(session, business, phone, "haircut thursday 2pm", "cb-secret")
-    reply = await customer_mod.handle_inbound_message(session, business, phone, "actually never mind", "cb-secret")
+    await customer_mod.handle_inbound_message(session, business, phone, "haircut 18 Aug 2pm", "cb-secret")
+    reply = await customer_mod.handle_inbound_message(session, business, phone, "cancel this request", "cb-secret")
 
     assert "cancelled" in reply.lower()
 
@@ -782,7 +785,7 @@ async def test_multi_service_booking_aggregates_totals(session, business, monkey
                 type=ai.IntentType.BOOK_SERVICE,
                 entities={
                     "service_names": ["Haircut", "Hair Coloring"],
-                    "date_text": "Friday",
+                    "date_text": "18 August 2026",
                     "time_text": "14:00",
                 },
             ),
@@ -790,7 +793,7 @@ async def test_multi_service_booking_aggregates_totals(session, business, monkey
     )
 
     phone = "254799000111"
-    reply = await customer_mod.handle_inbound_message(session, business, phone, "haircut and hair coloring Friday at 2", "cb-secret")
+    reply = await customer_mod.handle_inbound_message(session, business, phone, "haircut and hair coloring 18 Aug at 2", "cb-secret")
     assert "Haircut & Hair Coloring" in reply
     assert "4,800" in reply
     assert "2h 15m" in reply
@@ -817,7 +820,7 @@ async def test_phone_number_input_in_confirming_stage_does_not_wipe_state(sessio
         [
             ai.Intent(
                 type=ai.IntentType.BOOK_SERVICE,
-                entities={"service_name": "Haircut", "date_text": "Friday", "time_text": "14:00"},
+                entities={"service_name": "Haircut", "date_text": "18 August 2026", "time_text": "14:00"},
             ),
             ai.Intent(
                 type=ai.IntentType.CONFIRM_ACTION,
