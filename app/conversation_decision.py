@@ -95,6 +95,10 @@ class DecisionFactsSchema(BaseModel):
 
 
 class TurnDecisionSchema(BaseModel):
+    reasoning: str = Field(
+        default="",
+        description="Step-by-step reasoning analysis of customer message, intent, and history before classifying",
+    )
     primary_action: PrimaryAction
     secondary_actions: list[SecondaryAction] = Field(default_factory=list)
     facts: DecisionFactsSchema = Field(default_factory=DecisionFactsSchema)
@@ -113,7 +117,7 @@ def decision_from_schema(schema: TurnDecisionSchema) -> TurnDecision:
         state_policy=schema.state_policy,
         needs_owner=schema.needs_owner,
         confidence=schema.confidence,
-        reason=schema.reason,
+        reason=schema.reasoning or schema.reason,
     )
 
 
