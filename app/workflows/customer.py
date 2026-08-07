@@ -708,6 +708,8 @@ async def _dispatch(
                     day_info = hours.get(day_key)
                     day_name = DAY_NAMES[day_key]
                     if day_info is None:
+                        pending.pop("date_text", None)
+                        pending.pop("slot_start_iso", None)
                         reply = f"Sorry, we're closed on {day_name}s. Our hours are: {hours_mod.format_hours(hours)}"
                     else:
                         reply = f"Yes, we're open on {day_name} from {day_info['open']} to {day_info['close']}!"
@@ -1206,6 +1208,20 @@ async def _advance_booking(
                 STAGE_COLLECTING_BOOKING,
                 pending,
             )
+        hours = json.loads(business.hours_json or "{}")
+        if hours:
+            from app.hours import DAYS, DAY_NAMES
+            day_key = DAYS[parsed_date.weekday()]
+            day_info = hours.get(day_key)
+            if day_info is None:
+                day_name = DAY_NAMES[day_key]
+                pending.pop("date_text", None)
+                pending.pop("slot_start_iso", None)
+                return (
+                    f"We're closed on {day_name}s. Hours: {hours_mod.format_hours(hours)}",
+                    STAGE_COLLECTING_BOOKING,
+                    pending,
+                )
         return (
             f"Got it, {combined_name} on {parsed_date:%A %d %b} - what time works for you?",
             STAGE_COLLECTING_BOOKING,
@@ -1233,6 +1249,9 @@ async def _advance_booking(
     slot_end = slot_start + timedelta(minutes=total_duration)
     error = _validate_slot(business, slot_start, slot_end)
     if error:
+        if "closed" in error.lower():
+            pending.pop("date_text", None)
+            pending.pop("slot_start_iso", None)
         pending["time_text"] = None
         return error, STAGE_COLLECTING_BOOKING, pending
 

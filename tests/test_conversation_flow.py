@@ -839,3 +839,39 @@ async def test_phone_number_input_in_confirming_stage_does_not_wipe_state(sessio
     assert "sent" in r2.lower() or "prompt" in r2.lower()
     assert len(stk_calls) == 1
     assert stk_calls[0][1] == "0706832905"
+
+
+async def test_closed_day_clears_pending_date_text(session, business, monkeypatch):
+    import json
+    from app import repositories as repo
+    await _add_haircut(session, business)
+    # Set hours: closed on Sundays
+    hours = {
+        "mon": {"open": "09:00", "close": "18:00"},
+        "tue": {"open": "09:00", "close": "18:00"},
+        "wed": {"open": "09:00", "close": "18:00"},
+        "thu": {"open": "09:00", "close": "18:00"},
+        "fri": {"open": "09:00", "close": "18:00"},
+        "sat": {"open": "09:00", "close": "18:00"},
+        "sun": None,
+    }
+    business.hours_json = json.dumps(hours)
+
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(
+                type=ai.IntentType.BOOK_SERVICE,
+                entities={"service_name": "Haircut", "date_text": "Sunday"},
+            ),
+        ],
+    )
+
+    phone = "254700998877"
+    reply = await customer_mod.handle_inbound_message(session, business, phone, "haircut on Sunday", "cb-secret")
+    assert "closed on Sundays" in reply.lower() or "closed" in reply.lower()
+
+    state_row = await repo.get_conversation_state(session, business.id, phone)
+    state = json.loads(state_row.state_json)
+    assert state["pending"].get("date_text") is None
+
