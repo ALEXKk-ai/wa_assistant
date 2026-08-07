@@ -67,6 +67,7 @@ class ConversationTurnProcessor:
                 intent=intent.type.value,
                 stage=context.stage,
                 decision=decision.primary_action.value,
+                reasoning=decision.reason,
             ),
         )
 
