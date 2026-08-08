@@ -1017,3 +1017,29 @@ async def test_grounded_info_reply_uses_ai_for_custom_faq(session, business, mon
     assert len(owner_msgs) == 0
 
 
+async def test_mixed_service_booking_includes_unlisted_disclaimer_note(session, business, monkeypatch):
+    await _add_haircut(session, business)
+    from datetime import datetime, timedelta
+    start = datetime(2026, 10, 20, 14, 0)
+
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(
+                type=ai.IntentType.BOOK_SERVICE,
+                entities={
+                    "service_name": "Haircut",
+                    "service_names": ["Haircut", "Manicure"],
+                    "date_text": start.strftime("%d %B %Y"),
+                    "time_text": "14:00",
+                },
+            ),
+        ],
+    )
+
+    phone = "254711998877"
+    reply = await customer_mod.handle_inbound_message(session, business, phone, "I'd like haircut and manicure on 20 October 2026 at 2pm", "cb-secret")
+    assert "Haircut" in reply
+    assert "Note: We don't currently offer Manicure" in reply
+
+

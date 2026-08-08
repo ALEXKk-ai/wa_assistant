@@ -1133,6 +1133,19 @@ async def _advance_booking(
         if match_svc and match_svc not in matched_services:
             matched_services.append(match_svc)
 
+    # Track unlisted services in mixed requests for explicit disclaimer
+    unlisted_names = [
+        s_name for s_name in turn_service_names
+        if s_name and not any(
+            s_name.strip().lower() == catalog_s.name.strip().lower()
+            or s_name.strip().lower() in catalog_s.name.lower()
+            or catalog_s.name.lower() in s_name.strip().lower()
+            for catalog_s in services
+        )
+    ]
+    if unlisted_names:
+        pending["unlisted_service_names"] = unlisted_names
+
     if matched_services:
         pending["service_ids"] = [s.id for s in matched_services]
         pending["service_names"] = [s.name for s in matched_services]
@@ -1298,6 +1311,12 @@ async def _advance_booking(
             forbidden_claims=["Do not say payment is complete.", "Do not say the owner confirmed."],
         )
     )
+    if pending.get("unlisted_service_names"):
+        unlisted_str = " & ".join(s.title() for s in pending["unlisted_service_names"])
+        unlisted_note = f"\n\n(Note: We don't currently offer {unlisted_str} services at {business.name}.)"
+        if unlisted_note not in reply:
+            reply += unlisted_note
+
     addendum = _secondary_info_addendum(message_text, business)
     if addendum:
         reply += addendum
