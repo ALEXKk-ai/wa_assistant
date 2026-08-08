@@ -995,3 +995,25 @@ async def test_social_reply_greeting_returns_welcome_without_owner_alert(session
     assert len(owner_msgs) == 0
 
 
+async def test_grounded_info_reply_uses_ai_for_custom_faq(session, business, monkeypatch, sent_messages):
+    business.extra_info_text = "Free street parking is available behind the salon building."
+    await session.commit()
+
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(
+                type=ai.IntentType.ASK_INFO,
+                conversation_act=ai.ConversationAct.QUESTION,
+                reply_text="Free street parking is available behind the salon building.",
+            ),
+        ],
+    )
+
+    phone = "254788990011"
+    reply = await customer_mod.handle_inbound_message(session, business, phone, "Is parking available?", "cb-secret")
+    assert "parking is available" in reply.lower()
+    owner_msgs = [t for to, t in sent_messages if to == business.owner_whatsapp_number]
+    assert len(owner_msgs) == 0
+
+

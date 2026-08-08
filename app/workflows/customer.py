@@ -704,9 +704,10 @@ async def _dispatch(
         # For hours-related questions, ALWAYS use DB-sourced hours instead of
         # trusting the LLM's reply_text which can paraphrase incorrectly.
         lowered = message_text.lower()
-        is_hours_question = any(w in lowered for w in (
-            "hour", "open", "close", "closed", "closing", "available",
-        ))
+        is_hours_question = (
+            any(w in lowered for w in ("hour", "open", "close", "closed", "closing"))
+            and not any(w in lowered for w in ("parking", "wifi", "gift card"))
+        )
         date_text = (intent.entities or {}).get("date_text") or _extract_date_text(message_text, pending)
         has_day_ref = date_text is not None
         if is_hours_question and has_day_ref:
@@ -903,11 +904,11 @@ async def _grounded_info_reply(
                 reply += f"\n\nAdditional Info: {business.extra_info_text}"
             return reply
 
-    if any(word in lowered for word in ("hour", "open", "close", "closed", "closing")):
+    if any(w in lowered for w in ("hour", "open", "close", "closed", "closing")) and not any(w in lowered for w in ("parking", "wifi", "gift card")):
         hours = json.loads(business.hours_json or "{}")
         return f"Our hours are: {hours_mod.format_hours(hours)}"
 
-    if any(word in lowered for word in ("service", "offer", "available", "do you do")):
+    if any(word in lowered for word in ("service", "what do you offer", "list of services", "do you do")):
         if business.business_type == BusinessType.SERVICES:
             return await _list_services_text(session, business)
         hdr = f"We don't offer service appointments, but we sell quality products! Here's what {business.name} has available:"
@@ -936,6 +937,22 @@ async def _grounded_info_reply(
 
     if _SIMPLE_GREETING_RE.search(message_text):
         return f"Hello! Welcome to {business.name}. How can I help you with our services, products, or bookings today?"
+
+    # LLM Grounded Answer Generation: Try generating a grounded reply from business profile & extra info
+    catalog = await _build_catalog_summary(session, business)
+    hours = json.loads(business.hours_json or "{}")
+    grounded_intent = await ai.extract_intent(
+        customer_message=message_text,
+        business_name=business.name,
+        business_type=business.business_type.value,
+        catalog=catalog,
+        business_hours_text=hours_mod.format_hours(hours),
+        business_address=business.address_text or "not listed",
+        business_extra_info=business.extra_info_text or "none",
+        fulfillment_policy=getattr(business.fulfillment_mode, "value", "both"),
+    )
+    if grounded_intent and grounded_intent.reply_text and "check with the team" not in grounded_intent.reply_text.lower():
+        return grounded_intent.reply_text
 
     await owner_workflow.notify_owner_unanswered_question(
         business, customer_phone, message_text, customer_name=None
