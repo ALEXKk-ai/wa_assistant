@@ -184,6 +184,7 @@ Return ONLY JSON matching this schema, no markdown:
 Rules:
 - ALWAYS write the 'reasoning' field FIRST. Answer the 3 diagnostic questions before picking primary_action.
 - Choose exactly one primary_action. Use secondary_actions for safe side effects or response enrichment.
+- secondary_actions MUST ONLY contain: ANSWER_SERVICE_AVAILABILITY, ANSWER_PRODUCT_AVAILABILITY, ANSWER_PRICE, ANSWER_HOURS, NOTIFY_OWNER, PRESERVE_PENDING_CONTEXT. NEVER put PrimaryAction names (such as ESCALATE_TO_OWNER or ASK_CLARIFICATION) in secondary_actions.
 - For services, service_name/service_names must be exact names from Catalog. For goods, product_name must be an exact catalog name. If unlisted service is requested, extract date_text/time_text but do NOT substitute catalog names into service_name.
 - Booking/order facts are facts from THIS message only. Extract date_text and time_text exactly as spoken when present. Do not copy date/time/quantity from history unless the customer restates it.
 - If a customer gives service + date/time or a correction to an active booking, prefer START_BOOKING/CONTINUE_BOOKING/CHANGE_BOOKING_FIELD over escalation unless there are actual complaint/owner-authority words.

@@ -297,6 +297,7 @@ def apply_turn_policy(
         ai.IntentType.LIST_SERVICES,
         ai.IntentType.LIST_PRODUCTS,
         ai.IntentType.CHECK_STATUS,
+        ai.IntentType.OUT_OF_SCOPE,
         ai.IntentType.OFF_TOPIC,
     }
     if stage in active_detail_stages and detail_fact and not complaint_signal and not info_or_status_intent:
