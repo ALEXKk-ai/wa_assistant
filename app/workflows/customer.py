@@ -1142,9 +1142,10 @@ async def _advance_booking(
             matched_services.append(match_svc)
 
     # Track unlisted services in mixed requests for explicit disclaimer
+    _non_service_words = {"parking", "wifi", "gift card", "directions", "hours", "price", "location", "address", "discount", "offer"}
     unlisted_names = [
         s_name for s_name in turn_service_names
-        if s_name and not any(
+        if s_name and s_name.strip().lower() not in _non_service_words and not any(
             s_name.strip().lower() == catalog_s.name.strip().lower()
             or s_name.strip().lower() in catalog_s.name.lower()
             or catalog_s.name.lower() in s_name.strip().lower()
