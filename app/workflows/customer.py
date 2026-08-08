@@ -902,6 +902,13 @@ async def _grounded_info_reply(
     # based strictly on business profile, catalog, hours, address, and extra_info (FAQs).
     catalog = await _build_catalog_summary(session, business)
     hours = json.loads(business.hours_json or "{}")
+    extra_info = business.extra_info_text or ""
+    if business.deposit_percentage and business.deposit_percentage > 0:
+        dep_info = f"A {business.deposit_percentage:.0f}% deposit via M-Pesa is required for bookings to secure your slot."
+    else:
+        dep_info = "No deposit is required for bookings; customers pay when they arrive."
+    extra_info = f"{dep_info} {extra_info}".strip() if extra_info else dep_info
+
     grounded_intent = await ai.extract_intent(
         customer_message=message_text,
         business_name=business.name,
@@ -909,7 +916,7 @@ async def _grounded_info_reply(
         catalog=catalog,
         business_hours_text=hours_mod.format_hours(hours),
         business_address=business.address_text or "not listed",
-        business_extra_info=business.extra_info_text or "none",
+        business_extra_info=extra_info,
         fulfillment_policy=getattr(business.fulfillment_mode, "value", "both"),
     )
     if grounded_intent and grounded_intent.reply_text and "check with the team" not in grounded_intent.reply_text.lower():
