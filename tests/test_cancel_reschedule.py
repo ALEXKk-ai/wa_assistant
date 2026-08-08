@@ -190,7 +190,7 @@ async def test_numeric_selection_picks_the_right_booking_to_cancel(session, busi
 
 
 async def test_reschedule_success_path(session, business, monkeypatch, sent_messages):
-    start = datetime.now() + timedelta(days=3)
+    start = datetime(2026, 10, 15, 14, 0)
     booking, service, customer = await _make_confirmed_booking(session, business, "254700200010", start)
     new_start = start + timedelta(days=1)
 
