@@ -895,50 +895,11 @@ async def _compact_catalog_text(session: AsyncSession, business: Business) -> st
 async def _grounded_info_reply(
     session: AsyncSession, business: Business, customer_phone: str, message_text: str
 ) -> str:
-    lowered = message_text.lower()
-
-    if any(word in lowered for word in ("where", "located", "location", "address", "directions", "find")):
-        if business.address_text:
-            reply = f"We are located at: {business.address_text}."
-            if business.extra_info_text:
-                reply += f"\n\nAdditional Info: {business.extra_info_text}"
-            return reply
-
-    if any(w in lowered for w in ("hour", "open", "close", "closed", "closing")) and not any(w in lowered for w in ("parking", "wifi", "gift card")):
-        hours = json.loads(business.hours_json or "{}")
-        return f"Our hours are: {hours_mod.format_hours(hours)}"
-
-    if any(word in lowered for word in ("service", "what do you offer", "list of services", "do you do")):
-        if business.business_type == BusinessType.SERVICES:
-            return await _list_services_text(session, business)
-        hdr = f"We don't offer service appointments, but we sell quality products! Here's what {business.name} has available:"
-        return await _list_products_text(session, business, header=hdr)
-
-    if any(word in lowered for word in ("product", "goods", "sell", "stock")):
-        if business.business_type == BusinessType.GOODS:
-            return await _list_products_text(session, business)
-        hdr = f"We don't sell physical products, but here are the services {business.name} offers:"
-        return await _list_services_text(session, business, header=hdr)
-
-    if any(word in lowered for word in ("price", "cost", "how much")):
-        if business.business_type == BusinessType.SERVICES:
-            services = await repo.list_services(session, business.id)
-            match = _find_named_item(message_text, [s.name for s in services])
-            if match:
-                service = next(s for s in services if s.name == match)
-                return f"{service.name} is KES {service.price} ({service.duration_minutes} min)."
-        else:
-            products = await repo.list_products(session, business.id)
-            match = _find_named_item(message_text, [p.name for p in products])
-            if match:
-                product = next(p for p in products if p.name == match)
-                stock_note = "currently in stock" if product.stock_qty > 0 else "currently out of stock"
-                return f"{product.name} is KES {product.price} and is {stock_note}."
-
     if _SIMPLE_GREETING_RE.search(message_text):
         return f"Hello! Welcome to {business.name}. How can I help you with our services, products, or bookings today?"
 
-    # LLM Grounded Answer Generation: Try generating a grounded reply from business profile & extra info
+    # AI Grounded Response Generation: Let the AI generate a natural, satisfying response
+    # based strictly on business profile, catalog, hours, address, and extra_info (FAQs).
     catalog = await _build_catalog_summary(session, business)
     hours = json.loads(business.hours_json or "{}")
     grounded_intent = await ai.extract_intent(
