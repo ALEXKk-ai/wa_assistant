@@ -731,7 +731,7 @@ async def _dispatch(
         if intent.reply_text:
             return intent.reply_text, stage, pending
         return await _grounded_info_reply(
-            session, business, customer_phone, message_text
+            session, business, customer_phone, message_text, history=history
         ), stage, pending
 
     if intent.type == ai.IntentType.BOOK_SERVICE:
@@ -893,7 +893,7 @@ async def _compact_catalog_text(session: AsyncSession, business: Business) -> st
 
 
 async def _grounded_info_reply(
-    session: AsyncSession, business: Business, customer_phone: str, message_text: str
+    session: AsyncSession, business: Business, customer_phone: str, message_text: str, history: list[dict] | None = None
 ) -> str:
     if _SIMPLE_GREETING_RE.search(message_text):
         return f"Hello! Welcome to {business.name}. How can I help you with our services, products, or bookings today?"
@@ -914,6 +914,7 @@ async def _grounded_info_reply(
         business_name=business.name,
         business_type=business.business_type.value,
         catalog=catalog,
+        conversation_history=history,
         business_hours_text=hours_mod.format_hours(hours),
         business_address=business.address_text or "not listed",
         business_extra_info=extra_info,
