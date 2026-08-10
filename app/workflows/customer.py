@@ -1285,8 +1285,12 @@ async def _advance_booking(
         )
 
     if time_text and not date_text:
+        reply = f"Got it, {combined_name} at {time_text} - and what date would that be?"
+        if pending.get("unlisted_service_names"):
+            unlisted_str = " & ".join(s.title() for s in pending["unlisted_service_names"])
+            reply += f" (Note: We don't currently offer {unlisted_str} services at {business.name}.)"
         return (
-            "And what date would that be?",
+            reply,
             STAGE_COLLECTING_BOOKING,
             pending,
         )
