@@ -890,7 +890,32 @@ async def _grounded_info_reply(
         dep_info = f"A {business.deposit_percentage:.0f}% deposit via M-Pesa is required for bookings to secure your slot."
     else:
         dep_info = "No deposit is required for bookings; customers pay when they arrive."
-    extra_info = f"{dep_info} {extra_info}".strip() if extra_info else dep_info
+
+    if business.confirmation_mode == ConfirmationMode.MANUAL:
+        mode_info = (
+            "Booking Confirmation Policy: Manual confirmation mode is active. "
+            "Do NOT claim or guarantee that specific time slots are 100% free or reserved. "
+            "State operating hours and inform the customer that they can submit their preferred time slot, and the salon team will confirm availability."
+        )
+    else:
+        date_text = _extract_date_text(message_text, None)
+        slot_context = ""
+        if date_text:
+            parsed_date = _parse_date_text(date_text)
+            if parsed_date:
+                bookings = await repo.list_upcoming_bookings_for_business(session, business.id)
+                day_bookings = [
+                    b for b in bookings
+                    if b.slot_start.date() == parsed_date.date() and b.status not in (BookingStatus.CANCELLED, BookingStatus.REJECTED)
+                ]
+                booked_times = [b.slot_start.strftime("%H:%M") for b in day_bookings]
+                if booked_times:
+                    slot_context = f" Live slot info for {parsed_date.strftime('%A %d %b %Y')}: Booked times: {', '.join(booked_times)}."
+                else:
+                    slot_context = f" Live slot info for {parsed_date.strftime('%A %d %b %Y')}: All regular hours slots are open."
+        mode_info = f"Booking Confirmation Policy: Automatic confirmation mode is active.{slot_context}"
+
+    extra_info = f"{dep_info} {mode_info} {extra_info}".strip() if extra_info else f"{dep_info} {mode_info}"
 
     grounded_intent = await ai.extract_intent(
         customer_message=message_text,

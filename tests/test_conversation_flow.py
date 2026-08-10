@@ -1081,3 +1081,24 @@ async def test_resend_deposit_yes_confirmation_triggers_mpesa_payment(session, b
     assert "M-Pesa prompt" in r2 and "Check your phone" in r2
 
 
+async def test_manual_confirmation_mode_slot_query_injects_manual_policy(session, business, monkeypatch):
+    from app import models
+    business.confirmation_mode = models.ConfirmationMode.MANUAL
+    await session.commit()
+
+    captured_list = []
+    async def _fake_extract(**kwargs):
+        captured_list.append(kwargs)
+        if len(captured_list) == 1:
+            return ai.Intent(type=ai.IntentType.ASK_INFO, reply_text="")
+        return ai.Intent(type=ai.IntentType.ASK_INFO, reply_text="Submit your preferred time and our team will confirm!")
+
+    monkeypatch.setattr(ai, "extract_intent", _fake_extract)
+
+    phone = "254711882233"
+    reply = await customer_mod.handle_inbound_message(session, business, phone, "Are you free tomorrow at 2pm?", "cb-secret")
+    assert "Submit your preferred time" in reply
+    grounded_info = captured_list[-1].get("business_extra_info", "")
+    assert "Do NOT claim or guarantee that specific time slots are 100% free" in grounded_info
+
+
