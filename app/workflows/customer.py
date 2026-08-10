@@ -715,6 +715,19 @@ async def _dispatch(
         return await _advance_order(session, business, pending, intent.entities)
 
     if intent.type == ai.IntentType.RESEND_DEPOSIT:
+        if stage == STAGE_CONFIRMING and pending.get("type") == "resend_deposit":
+            if len(digits_in_msg) >= 9:
+                if not _is_valid_kenyan_phone(digits_in_msg):
+                    return (
+                        "That phone number looks invalid — please reply with a valid 10-digit M-Pesa phone number (e.g. 0712345678) or reply YES to use your main number.",
+                        STAGE_CONFIRMING,
+                        pending,
+                    )
+                pending["payment_phone"] = digits_in_msg
+            reply = await _finalize_pending_action(
+                session, business, customer, customer_phone, pending, mpesa_callback_secret
+            )
+            return reply, STAGE_IDLE, {}
         return await _start_resend_deposit(session, business, customer, intent)
 
     if intent.type == ai.IntentType.CANCEL_BOOKING:

@@ -1043,3 +1043,41 @@ async def test_mixed_service_booking_includes_unlisted_disclaimer_note(session, 
     assert "Note: We don't currently offer Manicure" in reply
 
 
+async def test_resend_deposit_yes_confirmation_triggers_mpesa_payment(session, business, monkeypatch):
+    from app import repositories as repo, models
+    await _add_haircut(session, business)
+    from datetime import datetime, timedelta
+    start = datetime(2026, 10, 20, 14, 0)
+    end = start + timedelta(hours=1)
+    booking = await repo.create_booking(
+        session,
+        business_id=business.id,
+        customer_id=1,
+        service_id=1,
+        slot_start=start,
+        slot_end=end,
+        deposit_amount=500.0,
+    )
+    booking.status = models.BookingStatus.PENDING_DEPOSIT
+    customer = await repo.get_or_create_customer(session, business.id, "254700001122")
+    booking.customer_id = customer.id
+    await session.commit()
+
+    phone = "254700001122"
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(type=ai.IntentType.RESEND_DEPOSIT, entities={}),
+            ai.Intent(type=ai.IntentType.CONFIRM_ACTION, entities={}),
+        ],
+    )
+
+    # 1. Ask for deposit resend
+    r1 = await customer_mod.handle_inbound_message(session, business, phone, "Send another prompt", "cb-secret")
+    assert "Reply YES to proceed" in r1
+
+    # 2. Reply YES to confirm resend
+    r2 = await customer_mod.handle_inbound_message(session, business, phone, "Yes", "cb-secret")
+    assert "M-Pesa prompt" in r2 and "Check your phone" in r2
+
+
