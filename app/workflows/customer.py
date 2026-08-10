@@ -1243,9 +1243,15 @@ async def _advance_booking(
 
     if not date_text and not time_text:
         dur_str = f"{total_duration // 60}h {total_duration % 60}m" if total_duration >= 60 else f"{total_duration} min"
-        return (
+        reply = (
             f"Great choice - {combined_name} (KES {_fmt_price(total_price)}, {dur_str}). "
-            "What date and time would you like to come in?",
+            "What date and time would you like to come in?"
+        )
+        if pending.get("unlisted_service_names"):
+            unlisted_str = " & ".join(s.title() for s in pending["unlisted_service_names"])
+            reply += f" (Note: We don't currently offer {unlisted_str} services at {business.name}.)"
+        return (
+            reply,
             STAGE_COLLECTING_BOOKING,
             pending,
         )
