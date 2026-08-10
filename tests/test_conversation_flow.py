@@ -1102,3 +1102,54 @@ async def test_manual_confirmation_mode_slot_query_injects_manual_policy(session
     assert "Do NOT claim or guarantee that specific time slots are 100% free" in grounded_info
 
 
+async def test_multi_service_booking_memory_retains_all_services_on_time_reply(session, business, monkeypatch):
+    from app import models
+    await _add_haircut(session, business)
+    # Add Braiding service (2500, 120 min)
+    braiding = models.Service(
+        business_id=business.id,
+        name="Braiding",
+        price=2500.0,
+        duration_minutes=120,
+    )
+    session.add(braiding)
+    await session.commit()
+
+    from datetime import datetime
+    start = datetime(2026, 10, 20, 11, 0)
+
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(
+                type=ai.IntentType.BOOK_SERVICE,
+                entities={
+                    "service_name": "Haircut",
+                    "service_names": ["Haircut", "Braiding"],
+                    "date_text": "20 October 2026",
+                    "time_text": None,
+                },
+            ),
+            ai.Intent(
+                type=ai.IntentType.BOOK_SERVICE,
+                entities={
+                    "service_name": None,
+                    "service_names": [],
+                    "date_text": None,
+                    "time_text": "11",
+                },
+            ),
+        ],
+    )
+
+    phone = "254711334455"
+    # 1. Ask for Haircut & Braiding
+    r1 = await customer_mod.handle_inbound_message(session, business, phone, "I want to book haircut and braiding tomorrow", "cb-secret")
+    assert "Haircut & Braiding" in r1
+
+    # 2. Reply with time '11'
+    r2 = await customer_mod.handle_inbound_message(session, business, phone, "11", "cb-secret")
+    assert "Haircut & Braiding" in r2
+    assert "KES 3,300" in r2
+
+

@@ -1138,8 +1138,10 @@ async def _advance_booking(
         return reply, STAGE_IDLE, {}
 
     raw_service_names = list(turn_service_names)
-    if pending.get("service_name") and pending["service_name"] not in raw_service_names:
-        raw_service_names.insert(0, pending["service_name"])
+    pending_names = pending.get("service_names") or ([pending["service_name"]] if pending.get("service_name") else [])
+    for p_name in pending_names:
+        if p_name and p_name not in raw_service_names:
+            raw_service_names.append(p_name)
 
     for s_name in raw_service_names:
         if not s_name:
