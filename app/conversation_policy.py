@@ -238,11 +238,11 @@ def apply_turn_policy(
             skip_pre_route=True,
             reason="blocked non-explicit pending cancellation",
         )
-
     # Clear booking/order evidence should beat false escalation labels unless
-    # the message actually contains complaint/owner-authority language.
-    booking_signal = (catalog_signal or service_fact) and (booking_phrase or has_date_signal or has_time_signal)
-    order_signal = (catalog_signal or product_fact) and (buy_phrase or (business_type == BusinessType.GOODS and order_phrase and not stock_only))
+    # the message actually contains complaint/owner-authority language or is a price/deposit question.
+    is_price_or_deposit_question = any(w in lowered for w in ("how much", "price", "cost", "deposit", "fee", "how about"))
+    booking_signal = (catalog_signal or service_fact) and (booking_phrase or (has_date_signal and has_time_signal)) and not is_price_or_deposit_question
+    order_signal = (catalog_signal or product_fact) and (buy_phrase or (business_type == BusinessType.GOODS and order_phrase and not stock_only)) and not is_price_or_deposit_question
     can_override_escalation = not complaint_signal and intent.type in {
         ai.IntentType.OUT_OF_SCOPE,
         ai.IntentType.OFF_TOPIC,
@@ -288,8 +288,6 @@ def apply_turn_policy(
             skip_pre_route=True,
             reason="order evidence overrode broad classification",
         )
-
-    # When a detail-collection flow is active, service/date/time/quantity facts
     # should continue that flow instead of being intercepted as unclear or
     # owner-required.  Complaints still escalate, but state is preserved.
     info_or_status_intent = intent.type in {
