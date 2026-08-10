@@ -699,11 +699,6 @@ async def _dispatch(
         return status_text, stage, pending
     if intent.type == ai.IntentType.ASK_INFO:
         lowered = message_text.lower()
-        if _SIMPLE_GREETING_RE.search(message_text):
-            return f"Hello! Welcome to {business.name}. How can I help you with our services, products, or bookings today?", stage, pending
-        # For hours-related questions, ALWAYS use DB-sourced hours instead of
-        # trusting the LLM's reply_text which can paraphrase incorrectly.
-        lowered = message_text.lower()
         is_hours_question = (
             any(w in lowered for w in ("hour", "open", "close", "closed", "closing"))
             and not any(w in lowered for w in ("parking", "wifi", "gift card"))
