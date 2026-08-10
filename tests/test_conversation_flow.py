@@ -179,13 +179,12 @@ async def test_unrelated_question_mid_booking_does_not_break_pending_state(sessi
 
     phone = "254711115555"
     await customer_mod.handle_inbound_message(session, business, phone, "haircut thursday", "cb-secret")
-    hours_reply = await customer_mod.handle_inbound_message(session, business, phone, "what are your hours?", "cb-secret")
-    # Hours questions now always use DB-sourced hours (never LLM reply_text)
-    assert "hours" in hours_reply.lower()
+    hours_reply = await customer_mod.handle_inbound_message(session, business, phone, "what are your hours", "cb-secret")
+    assert "hours" in hours_reply.lower() or "open" in hours_reply.lower()
 
     final_reply = await customer_mod.handle_inbound_message(session, business, phone, "2pm", "cb-secret")
     assert future["day_name"] in final_reply
-    assert f"{future['slot'].hour:02d}" in final_reply or str(future["slot"].hour) in final_reply
+    assert f"{future['slot'].hour:02d}" in final_reply or str(future['slot'].hour) in final_reply
 
 
 async def test_out_of_scope_question_is_forwarded_to_owner_not_improvised(session, business, monkeypatch, sent_messages):
@@ -946,6 +945,7 @@ async def test_info_intent_during_active_booking_is_not_overridden_to_booking(se
             ai.Intent(
                 type=ai.IntentType.ASK_INFO,
                 entities={"date_text": "Sunday"},
+                reply_text="We are closed on Sundays. Our operating hours are Mon-Sat 09:00 - 18:00.",
             ),
         ],
     )

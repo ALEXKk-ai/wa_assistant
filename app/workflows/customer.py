@@ -698,31 +698,6 @@ async def _dispatch(
                 return f"Our hours are: {hours_mod.format_hours(hours)}", stage, pending
         return status_text, stage, pending
     if intent.type == ai.IntentType.ASK_INFO:
-        lowered = message_text.lower()
-        is_hours_question = (
-            any(w in lowered for w in ("hour", "open", "close", "closed", "closing"))
-            and not any(w in lowered for w in ("parking", "wifi", "gift card"))
-        )
-        date_text = (intent.entities or {}).get("date_text") or _extract_date_text(message_text, pending)
-        has_day_ref = date_text is not None
-        if is_hours_question and has_day_ref:
-            hours = json.loads(business.hours_json or "{}")
-            parsed = _parse_date_text(date_text) if date_text else None
-            if parsed is not None:
-                from app.hours import DAYS, DAY_NAMES
-                day_key = DAYS[parsed.weekday()]
-                day_info = hours.get(day_key)
-                day_name = DAY_NAMES[day_key]
-                if day_info is None:
-                    pending.pop("date_text", None)
-                    pending.pop("slot_start_iso", None)
-                    reply = f"Sorry, we're closed on {day_name}s. Our hours are: {hours_mod.format_hours(hours)}"
-                else:
-                    reply = f"Yes, we're open on {day_name} from {day_info['open']} to {day_info['close']}!"
-                return reply, stage, pending
-        if is_hours_question:
-            hours = json.loads(business.hours_json or "{}")
-            return f"Our hours are: {hours_mod.format_hours(hours)}", stage, pending
         if intent.reply_text:
             return intent.reply_text, stage, pending
         return await _grounded_info_reply(
