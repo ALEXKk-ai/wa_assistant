@@ -47,6 +47,16 @@ def test_parse_next_week_weekday():
     assert (result_next.date() - result_this.date()).days == 7
 
 
+def test_combine_with_bare_digit_time():
+    combined_11 = _combine_date_and_time("25 December 2026", "11")
+    assert combined_11 is not None
+    assert combined_11.hour == 11
+
+    combined_2 = _combine_date_and_time("25 December 2026", "2")
+    assert combined_2 is not None
+    assert combined_2.hour == 14
+
+
 def test_parse_tomorrow_phrases():
     now = datetime.now()
     tmr = _parse_date_text("tomorrow")

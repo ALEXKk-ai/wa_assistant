@@ -2214,6 +2214,13 @@ def _combine_date_and_time(date_text: str, time_text: str) -> datetime | None:
         return None
     lowered = (time_text or "").lower().strip()
     
+    if lowered.isdigit():
+        num = int(lowered)
+        if 1 <= num <= 7:
+            return date_part.replace(hour=num + 12, minute=0, second=0, microsecond=0)
+        elif 8 <= num <= 23:
+            return date_part.replace(hour=num, minute=0, second=0, microsecond=0)
+
     if any(c.isdigit() for c in lowered):
         try:
             time_part = dateutil_parser.parse(lowered, default=datetime(2000, 1, 1, 0, 0), fuzzy=True)
