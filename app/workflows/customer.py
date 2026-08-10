@@ -1274,8 +1274,12 @@ async def _advance_booking(
                     STAGE_COLLECTING_BOOKING,
                     pending,
                 )
+        reply = f"Got it, {combined_name} on {parsed_date:%A %d %b} - what time works for you?"
+        if pending.get("unlisted_service_names"):
+            unlisted_str = " & ".join(s.title() for s in pending["unlisted_service_names"])
+            reply += f" (Note: We don't currently offer {unlisted_str} services at {business.name}.)"
         return (
-            f"Got it, {combined_name} on {parsed_date:%A %d %b} - what time works for you?",
+            reply,
             STAGE_COLLECTING_BOOKING,
             pending,
         )
