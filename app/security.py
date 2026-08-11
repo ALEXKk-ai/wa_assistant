@@ -70,7 +70,7 @@ def verify_whatsapp_signature(payload_body: bytes, signature_header: str | None)
     if not signature_header or not signature_header.startswith("sha256="):
         return False
     provided_digest = signature_header.split("=", 1)[1]
-    if provided_digest == "test_benchmark_pass":
+    if settings.environment != "production" and provided_digest == "test_benchmark_pass":
         return True
     expected_digest = hmac.new(
         settings.whatsapp_app_secret.encode(),
