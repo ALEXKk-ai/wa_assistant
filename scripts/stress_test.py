@@ -7,9 +7,16 @@ Simulates multiple concurrent customer turns hitting the webhook API to measure:
 """
 import argparse
 import asyncio
+import os
 import statistics
+import sys
 import time
 import httpx
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
 
 DEFAULT_URL = "http://localhost:8000/webhook/whatsapp"
 
@@ -48,11 +55,28 @@ def make_payload(phone_number: str, message_text: str) -> dict:
     }
 
 
+import hashlib
+import hmac
+import json
+from app.config import get_settings
+
+
+def compute_sig(body_bytes: bytes) -> str:
+    secret = get_settings().whatsapp_app_secret
+    digest = hmac.new(secret.encode(), body_bytes, hashlib.sha256).hexdigest()
+    return f"sha256={digest}"
+
+
 async def send_single_request(client: httpx.AsyncClient, url: str, phone: str, text: str) -> tuple[int, float]:
     payload = make_payload(phone, text)
+    body_bytes = json.dumps(payload).encode("utf-8")
+    headers = {
+        "Content-Type": "application/json",
+        "X-Hub-Signature-256": compute_sig(body_bytes),
+    }
     start = time.perf_counter()
     try:
-        resp = await client.post(url, json=payload, timeout=20.0)
+        resp = await client.post(url, content=body_bytes, headers=headers, timeout=20.0)
         latency = (time.perf_counter() - start) * 1000
         return resp.status_code, latency
     except Exception:
