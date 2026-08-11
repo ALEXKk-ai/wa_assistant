@@ -383,18 +383,30 @@ async def extract_turn_decision(
                 except Exception as exc:
                     logger.warning("Gemini primary turn decision failed; attempting Groq fallback", extra=log_extra(error=str(exc)))
 
-            # Fallback: Groq with llama-3.3-70b-versatile
+            # Fallback: Groq with llama-3.3-70b-versatile, falling back to llama-3.1-8b-instant if 70b rate limits
             if groq_key and not is_mocked_llm:
                 client = instructor.patch(AsyncGroq(api_key=groq_key))
-                structured = await client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
-                    response_model=TurnDecisionSchema,
-                    messages=[
-                        {"role": "system", "content": prompt},
-                        {"role": "user", "content": customer_message},
-                    ],
-                    max_retries=settings.llm_max_retries,
-                )
+                try:
+                    structured = await client.chat.completions.create(
+                        model="llama-3.3-70b-versatile",
+                        response_model=TurnDecisionSchema,
+                        messages=[
+                            {"role": "system", "content": prompt},
+                            {"role": "user", "content": customer_message},
+                        ],
+                        max_retries=settings.llm_max_retries,
+                    )
+                except Exception as groq_exc:
+                    logger.warning("Groq 70b turn decision failed; trying llama-3.1-8b-instant fallback", extra=log_extra(error=str(groq_exc)))
+                    structured = await client.chat.completions.create(
+                        model="llama-3.1-8b-instant",
+                        response_model=TurnDecisionSchema,
+                        messages=[
+                            {"role": "system", "content": prompt},
+                            {"role": "user", "content": customer_message},
+                        ],
+                        max_retries=settings.llm_max_retries,
+                    )
                 decision = decision_from_schema(structured)
                 return intent_from_decision(decision), decision
 
