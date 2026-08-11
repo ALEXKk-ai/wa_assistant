@@ -39,6 +39,7 @@ reused for cancelling a real, already-existing booking.
 """
 import json
 import re
+import time
 from datetime import datetime, timedelta
 
 from dateutil import parser as dateutil_parser
@@ -200,7 +201,10 @@ async def handle_inbound_message(
     message_text: str,
     mpesa_callback_secret: str,
     customer_name: str | None = None,
+    history: list[dict] | None = None,
+    timing: dict | None = None,
 ) -> str:
+    t_start_pre = time.perf_counter()
     customer = await repo.get_or_create_customer(session, business.id, customer_phone, name=customer_name)
     state_row = await repo.get_conversation_state(session, business.id, customer_phone)
     state = (
@@ -210,7 +214,7 @@ async def handle_inbound_message(
     )
     stage = state.get("stage", STAGE_IDLE)
     pending = state.get("pending") or {}
-    history = state.get("history") or []
+    history = list(history) if history is not None else list(state.get("history") or [])
 
     # A numbered pick from a "which booking?" list is handled directly,
     # deterministically, without invoking the LLM at all - it's a purely
@@ -245,6 +249,11 @@ async def handle_inbound_message(
 
     extracted_date_text = _extract_date_text(message_text, pending)
     extracted_time_text = _extract_time_text(message_text, pending, business)
+
+    if timing is not None:
+        timing["pre_llm_ms"] = (time.perf_counter() - t_start_pre) * 1000
+
+    t_llm_start = time.perf_counter()
     processed = await turn_processor.process(
         TurnContext(
             business=business,
@@ -263,6 +272,8 @@ async def handle_inbound_message(
             active_detail_stages=_ACTIVE_DETAIL_STAGES,
         )
     )
+    if timing is not None:
+        timing["llm_call_ms"] = (time.perf_counter() - t_llm_start) * 1000
     intent = processed.intent
 
     pre_routed = None

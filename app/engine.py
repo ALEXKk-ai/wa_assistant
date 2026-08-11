@@ -89,7 +89,7 @@ _message_dedup = _MessageDedup()
 
 
 async def handle_whatsapp_webhook(
-    session: AsyncSession, payload: dict, mpesa_callback_secret: str
+    session: AsyncSession, payload: dict, mpesa_callback_secret: str, timing: dict | None = None
 ) -> None:
     """Parses a Meta WhatsApp Cloud API webhook payload. Meta's payload
     shape wraps messages several levels deep; we only handle the single
@@ -145,7 +145,7 @@ async def handle_whatsapp_webhook(
         return
 
     reply_text = await customer_workflow.handle_inbound_message(
-        session, business, sender_phone, text, mpesa_callback_secret, customer_name=sender_name
+        session, business, sender_phone, text, mpesa_callback_secret, customer_name=sender_name, timing=timing
     )
     await send_business_message(business, sender_phone, reply_text)
 

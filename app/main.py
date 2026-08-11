@@ -150,9 +150,23 @@ from fastapi import BackgroundTasks, FastAPI, Request, Response
 
 
 async def _process_whatsapp_background(payload: dict) -> None:
+    t0 = time.perf_counter()
     try:
         async with get_session() as session:
-            await engine.handle_whatsapp_webhook(session, payload, settings.mpesa_callback_secret)
+            timing = {"pre_llm_ms": 0.0, "llm_call_ms": 0.0, "post_llm_ms": 0.0}
+            await engine.handle_whatsapp_webhook(session, payload, settings.mpesa_callback_secret, timing=timing)
+            total_ms = (time.perf_counter() - t0) * 1000
+            timing["total_ms"] = total_ms
+            timing["post_llm_ms"] = max(0.0, total_ms - timing["pre_llm_ms"] - timing["llm_call_ms"])
+            logger.info(
+                "Background Task Timing Benchmark",
+                extra=log_extra(
+                    pre_llm_ms=round(timing["pre_llm_ms"], 1),
+                    llm_call_ms=round(timing["llm_call_ms"], 1),
+                    post_llm_ms=round(timing["post_llm_ms"], 1),
+                    total_ms=round(timing["total_ms"], 1),
+                ),
+            )
     except Exception:
         logger.exception("Unhandled error processing WhatsApp webhook in background task")
 
