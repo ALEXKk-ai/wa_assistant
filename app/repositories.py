@@ -300,6 +300,20 @@ async def list_upcoming_bookings_for_customer(
     return list(result.scalars().all())
 
 
+async def list_upcoming_bookings_for_business(
+    session: AsyncSession, business_id: int
+) -> list[Booking]:
+    result = await session.execute(
+        select(Booking)
+        .where(
+            Booking.business_id == business_id,
+            Booking.status.notin_(_NON_BLOCKING_BOOKING_STATUSES),
+        )
+        .order_by(Booking.slot_start)
+    )
+    return list(result.scalars().all())
+
+
 _NON_BLOCKING_ORDER_STATUSES = (OrderStatus.CANCELLED, OrderStatus.REJECTED)
 
 
