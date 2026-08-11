@@ -146,8 +146,27 @@ async def verify_whatsapp_webhook(request: Request) -> Response:
     return Response(status_code=403)
 
 
+from fastapi import BackgroundTasks, FastAPI, Request, Response
+
+
+async def _process_whatsapp_background(payload: dict) -> None:
+    try:
+        async with get_session() as session:
+            await engine.handle_whatsapp_webhook(session, payload, settings.mpesa_callback_secret)
+    except Exception:
+        logger.exception("Unhandled error processing WhatsApp webhook in background task")
+
+
+async def _process_mpesa_background(payload: dict) -> None:
+    try:
+        async with get_session() as session:
+            await engine.handle_mpesa_callback(session, payload, _business_lookup)
+    except Exception:
+        logger.exception("Unhandled error processing M-Pesa callback in background task")
+
+
 @app.post("/webhook/whatsapp")
-async def receive_whatsapp_webhook(request: Request) -> Response:
+async def receive_whatsapp_webhook(request: Request, background_tasks: BackgroundTasks) -> Response:
     body = await request.body()
     signature = request.headers.get("X-Hub-Signature-256")
     if not verify_whatsapp_signature(body, signature):
@@ -160,16 +179,12 @@ async def receive_whatsapp_webhook(request: Request) -> Response:
         return Response(status_code=429)
 
     payload = await request.json()
-    try:
-        async with get_session() as session:
-            await engine.handle_whatsapp_webhook(session, payload, settings.mpesa_callback_secret)
-    except Exception:  # noqa: BLE001
-        logger.exception("Unhandled error processing WhatsApp webhook")
+    background_tasks.add_task(_process_whatsapp_background, payload)
     return Response(status_code=200)
 
 
 @app.post("/webhook/mpesa/{path_secret}")
-async def receive_mpesa_callback(path_secret: str, request: Request) -> Response:
+async def receive_mpesa_callback(path_secret: str, request: Request, background_tasks: BackgroundTasks) -> Response:
     if not verify_mpesa_callback_secret(path_secret):
         logger.warning("Rejected M-Pesa callback with invalid path secret")
         return Response(status_code=403)
@@ -180,11 +195,7 @@ async def receive_mpesa_callback(path_secret: str, request: Request) -> Response
         return Response(status_code=429)
 
     payload = await request.json()
-    try:
-        async with get_session() as session:
-            await engine.handle_mpesa_callback(session, payload, _business_lookup)
-    except Exception:  # noqa: BLE001
-        logger.exception("Unhandled error processing M-Pesa callback")
+    background_tasks.add_task(_process_mpesa_background, payload)
     return Response(status_code=200)
 
 
