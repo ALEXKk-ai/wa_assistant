@@ -52,10 +52,20 @@ async def main():
         session.add(haircut)
         await session.commit()
 
-        customer_phone = "254712345678"
+        # Create an OCCUPIED booking tomorrow at 11:00
+        now = datetime.now()
+        tomorrow_11 = (now + timedelta(days=1)).replace(hour=11, minute=0, second=0, microsecond=0)
+        
+        customer1 = await repo.get_or_create_customer(session, business.id, "254700999888", "Existing Client")
+        await repo.create_booking(
+            session, business.id, customer1.id, haircut.id, tomorrow_11, tomorrow_11 + timedelta(minutes=45), 0.0
+        )
+        await session.commit()
 
-        for msg in ["Are you free tomorrow at 11?", "Are you free tomorrow at 11 for a haircut?"]:
-            print(f"\n--- Customer Message: '{msg}' ---")
+        customer_phone = "254712345678"
+        
+        for msg in ["Is 11am open tomorrow?", "What times are booked tomorrow?"]:
+            print(f"\n--- Customer Message (Slot Occupied): '{msg}' ---")
             reply = await customer_mod.handle_inbound_message(
                 session, business, customer_phone, msg, "test-callback-secret"
             )

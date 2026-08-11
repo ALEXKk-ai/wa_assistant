@@ -911,9 +911,9 @@ async def _grounded_info_reply(
                 ]
                 booked_times = [b.slot_start.strftime("%H:%M") for b in day_bookings]
                 if booked_times:
-                    slot_context = f" Live slot info for {parsed_date.strftime('%A %d %b %Y')}: Booked times: {', '.join(booked_times)}."
+                    slot_context = f" Live slot info for {parsed_date.strftime('%A %d %b %Y')}: Booked times (UNAVAILABLE): {', '.join(booked_times)}. All other regular operating hours slots are OPEN."
                 else:
-                    slot_context = f" Live slot info for {parsed_date.strftime('%A %d %b %Y')}: All regular hours slots are open."
+                    slot_context = f" Live slot info for {parsed_date.strftime('%A %d %b %Y')}: All regular operating hours slots are OPEN."
         mode_info = f"Booking Confirmation Policy: Automatic confirmation mode is active.{slot_context}"
 
     extra_info = f"{dep_info} {mode_info} {extra_info}".strip() if extra_info else f"{dep_info} {mode_info}"
