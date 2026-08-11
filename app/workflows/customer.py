@@ -698,6 +698,7 @@ async def _dispatch(
                 return f"Our hours are: {hours_mod.format_hours(hours)}", stage, pending
         return status_text, stage, pending
     if intent.type == ai.IntentType.ASK_INFO:
+        pending.pop("unlisted_service_names", None)
         if intent.reply_text:
             return intent.reply_text, stage, pending
         return await _grounded_info_reply(
