@@ -435,7 +435,10 @@ async def _call_llm(system_prompt: str, user_message: str, settings) -> str:
     async with httpx.AsyncClient(timeout=settings.llm_timeout_seconds) as client:
         if settings.llm_provider == "gemini" or settings.gemini_api_key:
             api_key = settings.gemini_api_key or settings.llm_api_key
-            url = settings.llm_api_base.split("?")[0] if settings.llm_api_base else "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+            if settings.llm_api_base and "generativelanguage.googleapis.com" in settings.llm_api_base:
+                url = settings.llm_api_base.split("?")[0]
+            else:
+                url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
             if "key=" not in url and api_key:
                 url = f"{url}?key={api_key}"
             headers = {"Content-Type": "application/json"}
