@@ -1793,41 +1793,56 @@ async def _finalize_resend_deposit(
 
 
 async def _finalize_booking(session, business, customer, customer_phone, pending, mpesa_callback_secret) -> str:
-    service = await repo.get_service_for_business(session, business.id, pending.get("service_id"))
-    if service is None or not pending.get("slot_start_iso"):
+    service_ids = pending.get("service_ids") or ([pending.get("service_id")] if pending.get("service_id") else [])
+    services = []
+    for sid in service_ids:
+        s = await repo.get_service_for_business(session, business.id, sid)
+        if s:
+            services.append(s)
+    if not services or not pending.get("slot_start_iso"):
         return "Something went wrong with your booking - please start again by naming the service."
 
-    slot_start = datetime.fromisoformat(pending["slot_start_iso"])
-    slot_end = slot_start + timedelta(minutes=service.duration_minutes)
+    combined_name = " & ".join(s.name for s in services)
+    total_price = sum(float(s.price) for s in services)
+    total_duration = sum(s.duration_minutes for s in services)
 
-    # Defense in depth: re-validate right before creating, in case enough
-    # time passed since the quote that the slot is now in the past (hours
-    # changing between quote and confirm is rarer, but cheap to re-check too).
+    slot_start = datetime.fromisoformat(pending["slot_start_iso"])
+    slot_end = slot_start + timedelta(minutes=total_duration)
+
     error = _validate_slot(business, slot_start, slot_end)
     if error:
         return error + " Please tell me a new date and time."
 
-    deposit_amount = payments.compute_deposit_amount(business, float(service.price), item=service)
+    deposit_amount = sum(payments.compute_deposit_amount(business, float(s.price), item=s) for s in services)
     skip_conflict = _is_manual(business)
 
+    created_bookings = []
+    current_start = slot_start
     try:
-        booking = await repo.create_booking(
-            session,
-            business.id,
-            customer.id,
-            service.id,
-            slot_start,
-            slot_end,
-            deposit_amount,
-            skip_conflict_check=skip_conflict,
-        )
+        for s in services:
+            current_end = current_start + timedelta(minutes=s.duration_minutes)
+            s_dep = payments.compute_deposit_amount(business, float(s.price), item=s)
+            b = await repo.create_booking(
+                session,
+                business.id,
+                customer.id,
+                s.id,
+                current_start,
+                current_end,
+                s_dep,
+                skip_conflict_check=skip_conflict,
+            )
+            created_bookings.append(b)
+            current_start = current_end
     except BookingConflictError:
         return "That slot just got booked by someone else - what other time works for you?"
 
+    primary_booking = created_bookings[0]
+
     await owner_workflow.notify_owner_new_booking_request(
         business,
-        booking.id,
-        service.name,
+        primary_booking.id,
+        combined_name,
         f"{slot_start:%d %b %Y at %H:%M}",
         customer_phone,
         deposit_amount=deposit_amount,
@@ -1836,29 +1851,32 @@ async def _finalize_booking(session, business, customer, customer_phone, pending
 
     if deposit_amount <= 0 or not business.mpesa_shortcode:
         if _is_manual(business):
-            booking.status = BookingStatus.AWAITING_OWNER_CONFIRMATION
+            for b in created_bookings:
+                b.status = BookingStatus.AWAITING_OWNER_CONFIRMATION
             await session.flush()
             return (
-                f"Booked {service.name} on {slot_start:%d %b %Y at %H:%M}! "
+                f"Booked {combined_name} on {slot_start:%d %b %Y at %H:%M}! "
                 f"Your request has been sent to the team for confirmation. "
-                f"Payment of KES {_fmt_price(service.price)} will be collected upon arrival."
+                f"Payment of KES {_fmt_price(total_price)} will be collected upon arrival."
             )
-        booking.status = BookingStatus.CONFIRMED
+        for b in created_bookings:
+            b.status = BookingStatus.CONFIRMED
         await session.flush()
         return (
-            f"Booked! Your appointment for {service.name} on {slot_start:%d %b %Y at %H:%M} "
-            f"is confirmed. Payment of KES {_fmt_price(service.price)} will be collected upon arrival."
+            f"Booked! Your appointment for {combined_name} on {slot_start:%d %b %Y at %H:%M} "
+            f"is confirmed. Payment of KES {_fmt_price(total_price)} will be collected upon arrival."
         )
 
     payment = await payments.initiate_deposit(
         session, business, customer_phone, deposit_amount, mpesa_callback_secret, payment_phone=pending.get("payment_phone")
     )
-    booking.payment_id = payment.id
+    for b in created_bookings:
+        b.payment_id = payment.id
     await session.flush()
 
     target_msg = f" (sent to {pending.get('payment_phone')})" if pending.get("payment_phone") else ""
     return (
-        f"Booked {service.name} on {slot_start:%d %b %Y at %H:%M}, pending a KES "
+        f"Booked {combined_name} on {slot_start:%d %b %Y at %H:%M}, pending a KES "
         f"{_fmt_price(deposit_amount)} deposit. Check your phone{target_msg} for the M-Pesa prompt to confirm."
     )
 
