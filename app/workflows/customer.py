@@ -726,6 +726,23 @@ async def _dispatch(
     if intent.type == ai.IntentType.BUY_PRODUCT:
         return await _advance_order(session, business, pending, intent.entities)
 
+    digits_in_msg = "".join(c for c in message_text if c.isdigit())
+    if intent.type == ai.IntentType.CONFIRM_ACTION or (stage == STAGE_CONFIRMING and len(digits_in_msg) >= 9):
+        if stage == STAGE_CONFIRMING and pending:
+            if len(digits_in_msg) >= 9:
+                if not _is_valid_kenyan_phone(digits_in_msg):
+                    return (
+                        "That phone number looks invalid — please reply with a valid 10-digit M-Pesa phone number (e.g. 0712345678) or reply YES to use your main number.",
+                        STAGE_CONFIRMING,
+                        pending,
+                    )
+                pending["payment_phone"] = digits_in_msg
+            reply = await _finalize_pending_action(
+                session, business, customer, customer_phone, pending, mpesa_callback_secret
+            )
+            return reply, STAGE_IDLE, {}
+        return intent.reply_text or "Sure - what would you like to confirm?", stage, pending
+
     if intent.type == ai.IntentType.RESEND_DEPOSIT:
         if stage == STAGE_CONFIRMING and pending.get("type") == "resend_deposit":
             if len(digits_in_msg) >= 9:
@@ -752,26 +769,6 @@ async def _dispatch(
         if business.business_type != BusinessType.SERVICES:
             return "Rescheduling isn't available for orders - please contact us directly.", STAGE_IDLE, {}
         return await _start_reschedule_booking(session, business, customer)
-
-
-
-
-    digits_in_msg = "".join(c for c in message_text if c.isdigit())
-    if intent.type == ai.IntentType.CONFIRM_ACTION or (stage == STAGE_CONFIRMING and len(digits_in_msg) >= 9):
-        if stage == STAGE_CONFIRMING and pending:
-            if len(digits_in_msg) >= 9:
-                if not _is_valid_kenyan_phone(digits_in_msg):
-                    return (
-                        "That phone number looks invalid — please reply with a valid 10-digit M-Pesa phone number (e.g. 0712345678) or reply YES to use your main number.",
-                        STAGE_CONFIRMING,
-                        pending,
-                    )
-                pending["payment_phone"] = digits_in_msg
-            reply = await _finalize_pending_action(
-                session, business, customer, customer_phone, pending, mpesa_callback_secret
-            )
-            return reply, STAGE_IDLE, {}
-        return intent.reply_text or "Sure - what would you like to confirm?", stage, pending
 
     if intent.type == ai.IntentType.CANCEL_ACTION:
         if pending.get("type") in ("cancel_booking", "cancel_order"):

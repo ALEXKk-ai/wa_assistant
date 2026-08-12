@@ -56,6 +56,7 @@ class ConversationTurnProcessor:
             business_address=context.business_address,
             business_extra_info=context.business_extra_info,
             fulfillment_policy=context.fulfillment_policy,
+            stage=context.stage,
         )
 
         intent = self._fallback_booking_recovery(intent, context)

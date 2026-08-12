@@ -192,6 +192,8 @@ Rules:
 - Booking/order facts are facts from THIS message only. Extract date_text and time_text exactly as spoken when present. Do not copy date/time/quantity from history unless the customer restates it.
 - If a customer gives service + date/time or a correction to an active booking, prefer START_BOOKING/CONTINUE_BOOKING/CHANGE_BOOKING_FIELD over escalation unless there are actual complaint/owner-authority words.
 - Questions starting with "are you free", "do you have availability", "is X open" are availability inquiries (ASK_BUSINESS_INFO / ASK_INFO), NOT booking requests (START_BOOKING), unless the customer explicitly states "I want to book", "reserve", or "schedule".
+- For Current Conversation Stage="confirming": submitting a phone number (e.g. "0706832905" or "0706832905 28th") or saying "YES" is ALWAYS CONFIRM_PENDING_ACTION (CONFIRM_ACTION), NOT RESEND_DEPOSIT_PROMPT, ASK_CATALOG, or START_BOOKING.
+- RESEND_DEPOSIT_PROMPT is ONLY for explicit requests to resend/retry an M-Pesa prompt for an ALREADY-SAVED past booking in the database (e.g. "resend payment prompt", "retry STK push"). NEVER use when submitting a phone number for a new draft booking in stage="confirming".
 - OFF_TOPIC_BOUNDARY preserves pending state. CANCEL_PENDING_ACTION requires explicit cancel/stop/nevermind/start over language.
 - ASK_STOCK is for "do you have X", "is X in stock", or restock notification requests. If a restock notification is requested, include NOTIFY_OWNER.
 - ESCALATE_TO_OWNER is only for explicit complaints, refund exceptions, human/manager requests, proposals, or unavailable policy facts.
@@ -204,6 +206,9 @@ Strict boundaries (NEVER violate):
 - Greetings ("hi", "hello", "good morning") with no other content are SOCIAL_REPLY, even mid-booking.
 
 Few-shot examples:
+
+Customer: "0706832905 28th" (Current Stage: confirming, active Haircut booking draft)
+{{"reasoning": "1) DO - customer submitting M-Pesa phone number to confirm draft booking. 2) Single intent. 3) Primary: confirm pending booking action.", "primary_action": "CONFIRM_PENDING_ACTION", "secondary_actions": ["PRESERVE_PENDING_CONTEXT"], "facts": {{"payment_phone": "0706832905"}}, "state_policy": "preserve", "needs_owner": false, "confidence": 0.98}}
 
 Customer: "Do you do knotless braids?" (active Haircut booking in memory)
 {{"reasoning": "1) KNOW - asking if a service exists. 2) Single intent. 3) Primary: catalog inquiry.", "primary_action": "ASK_CATALOG", "secondary_actions": ["ANSWER_SERVICE_AVAILABILITY", "PRESERVE_PENDING_CONTEXT"], "facts": {{"service_name": "Knotless Braids"}}, "state_policy": "preserve", "needs_owner": false, "confidence": 0.92}}
@@ -226,6 +231,7 @@ Address & Location: {business_address}
 Extra Info & FAQs: {business_extra_info}
 Catalog: {catalog}
 Operating hours: {business_hours_text}
+Current Conversation Stage: {stage}
 Currently collecting: {pending_summary}
 Recent conversation:
 {history_text}
@@ -344,6 +350,7 @@ async def extract_turn_decision(
     business_address: str = "not listed",
     business_extra_info: str = "none",
     fulfillment_policy: str = "both (delivery or store pickup)",
+    stage: str = "idle",
 ):
     """Return the new strict decision schema, falling back to legacy intent."""
     from app.conversation_decision import (
@@ -366,6 +373,7 @@ async def extract_turn_decision(
             business_extra_info=business_extra_info or "none",
             catalog=catalog,
             business_hours_text=business_hours_text,
+            stage=stage,
             pending_summary=_format_pending(pending),
             history_text=_format_history(conversation_history or []),
         )

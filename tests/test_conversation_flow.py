@@ -1153,3 +1153,62 @@ async def test_multi_service_booking_memory_retains_all_services_on_time_reply(s
     assert "KES 3,300" in r2
 
 
+async def test_confirming_stage_phone_with_extra_words_and_resend_deposit_fallback(session, business, monkeypatch):
+    business.deposit_percentage = 20.0
+    business.mpesa_shortcode = "174379"
+    await _add_haircut(session, business)
+    stk_calls = []
+
+    async def mock_initiate(session, biz, phone, deposit, cb_secret, payment_phone=None):
+        stk_calls.append((phone, payment_phone, deposit))
+        from app.models import Payment, PaymentStatus
+        from decimal import Decimal
+        p = Payment(
+            business_id=biz.id,
+            idempotency_key="idemp_123",
+            checkout_request_id="ws_123",
+            amount=Decimal(str(deposit)),
+            status=PaymentStatus.PENDING,
+        )
+        session.add(p)
+        await session.flush()
+        return p
+
+    monkeypatch.setattr("app.payments.initiate_deposit", mock_initiate)
+
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(
+                type=ai.IntentType.BOOK_SERVICE,
+                entities={"service_name": "Haircut", "date_text": "28 October 2026", "time_text": "11:00"},
+            ),
+            ai.Intent(
+                type=ai.IntentType.CONFIRM_ACTION,
+                entities={"payment_phone": "0706832905"},
+            ),
+            ai.Intent(
+                type=ai.IntentType.RESEND_DEPOSIT,
+                entities={"payment_phone": "0706832905"},
+            ),
+        ],
+    )
+
+    phone = "254700998877"
+    # 1. Book Haircut for 28 Oct at 11:00 -> STAGE_CONFIRMING
+    r1 = await customer_mod.handle_inbound_message(session, business, phone, "I want to book haircut tomorrow at 11", "cb-secret")
+    assert "Haircut" in r1
+    assert "Reply YES" in r1
+
+    # 2. Reply with invalid phone + date string ("0706832905 28th")
+    r2 = await customer_mod.handle_inbound_message(session, business, phone, "0706832905 28th", "cb-secret")
+    assert "invalid" in r2.lower()
+
+    # 3. Correct to valid phone "0706832905", even if LLM misclassifies intent as RESEND_DEPOSIT
+    r3 = await customer_mod.handle_inbound_message(session, business, phone, "0706832905", "cb-secret")
+    assert "sent" in r3.lower() or "prompt" in r3.lower()
+    assert len(stk_calls) == 1
+    assert stk_calls[0][1] == "0706832905"
+
+
+
