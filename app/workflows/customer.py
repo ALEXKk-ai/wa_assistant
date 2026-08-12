@@ -394,10 +394,26 @@ async def _pre_route_conversation_act(
 
     act = intent.conversation_act
 
+    has_explicit_human_or_complaint = (
+        act == ai.ConversationAct.COMPLAINT
+        or bool(_EXPLICIT_HUMAN_REQUEST_RE.search(message_text))
+        or bool(re.search(r"\b(complaint|bad|horrible|unhappy|late|delay|ruined|disappointed|terrible|worst|speak to someone|talk to someone|human|agent|manager)\b", message_text, re.IGNORECASE))
+    )
+    is_transactional_intent = intent.type in (
+        ai.IntentType.CANCEL_BOOKING,
+        ai.IntentType.CANCEL_ORDER,
+        ai.IntentType.BOOK_SERVICE,
+        ai.IntentType.BUY_PRODUCT,
+        ai.IntentType.CHECK_STATUS,
+        ai.IntentType.RESCHEDULE_BOOKING,
+    )
+    if is_transactional_intent and not has_explicit_human_or_complaint:
+        return None
+
     if (
         intent.authority_route == ai.AuthorityRoute.OWNER_AUTHORITY_REQUIRED
         or act in _OWNER_AUTHORITY_ACTS
-        or bool(_EXPLICIT_HUMAN_REQUEST_RE.search(message_text))
+        or has_explicit_human_or_complaint
     ):
         await owner_workflow.notify_owner_unanswered_question(
             business, customer_phone, message_text, customer_name=customer.name

@@ -1537,6 +1537,29 @@ def test_move_x_to_y_weekday_extraction():
     assert date2 == "monday"
 
 
+async def test_cancel_booking_bypasses_pre_route_owner_escalation(session, business, monkeypatch):
+    """Verify CANCEL_BOOKING with OWNER_AUTHORITY_REQUIRED authority route is not intercepted by pre-routing unless explicit complaint is present."""
+    await _add_haircut(session, business)
+
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(
+                type=ai.IntentType.CANCEL_BOOKING,
+                authority_route=ai.AuthorityRoute.OWNER_AUTHORITY_REQUIRED,
+                conversation_act=ai.ConversationAct.REQUEST,
+            ),
+        ],
+    )
+
+    phone = "254799009988"
+    reply = await customer_mod.handle_inbound_message(session, business, phone, "Cancel my haircut booking", "cb-secret")
+    # Must NOT say "I've passed this to the team"
+    assert "passed this to the team" not in reply.lower()
+    assert "don't have any upcoming" in reply.lower() or "cancel" in reply.lower()
+
+
+
 
 
 
