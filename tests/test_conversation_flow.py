@@ -1511,6 +1511,33 @@ async def test_cancel_booking_confirmation_yes_vs_no(session, business, monkeypa
     assert "won't cancel it after all" in r4.lower()
 
 
+async def test_unlisted_item_question_returns_explicit_disclaimer(session, business, monkeypatch):
+    """Verify asking for an unlisted service ('balayage') returns an explicit disclaimer instead of a silent catalog dump."""
+    await _add_haircut(session, business)
+
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(type=ai.IntentType.LIST_SERVICES, entities={"service_name": "Balayage"}),
+        ],
+    )
+
+    phone = "254799005566"
+    reply = await customer_mod.handle_inbound_message(session, business, phone, "Do you do balayage?", "cb-secret")
+    assert "don't currently offer" in reply.lower() or "balayage" in reply.lower()
+    assert "Haircut" in reply
+
+
+def test_move_x_to_y_weekday_extraction():
+    """Verify _extract_date_text parses the target date ('monday') when phrase is 'move my Saturday haircut to monday instead'."""
+    date1 = customer_mod._extract_date_text("Can I move my Saturday haircut to monday instead?")
+    assert date1 == "monday"
+
+    date2 = customer_mod._extract_date_text("Move it to Monday then")
+    assert date2 == "monday"
+
+
+
 
 
 

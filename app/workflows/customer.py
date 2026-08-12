@@ -471,25 +471,31 @@ async def _uncertain_attendance_reply(
 def _extract_date_text(message_text: str, pending: dict | None = None) -> str | None:
     text = message_text.strip()
     lowered = text.lower()
-    if "same day" in lowered:
+    lowered_clean = re.sub(r"\b(then|instead|please|thanks)\b", "", lowered).strip()
+    if "same day" in lowered_clean:
         if pending and pending.get("date_text"):
             return pending["date_text"]
         return None
-    if "fraiday" in lowered:
+    if "fraiday" in lowered_clean:
         return "friday"
-    if "tommorrow" in lowered:
+    if "tommorrow" in lowered_clean or "tomorrow" in lowered_clean:
         return "tomorrow"
-    if "tomorrow" in lowered:
-        return "tomorrow"
-    if "today" in lowered:
+    if "today" in lowered_clean or "tonight" in lowered_clean:
         return "today"
-    if "tonight" in lowered:
+    if any(w in lowered_clean for w in ("this morning", "this afternoon", "this evening")):
         return "today"
-    if any(w in lowered for w in ("this morning", "this afternoon", "this evening")):
-        return "today"
+    # If phrase has " to [day]", prefer the target date after "to"
+    if " to " in lowered_clean:
+        after_to = lowered_clean.split(" to ", 1)[1]
+        to_match = re.search(
+            r"\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun)\b",
+            after_to,
+        )
+        if to_match:
+            return to_match.group(1)
     weekday_match = re.search(
         r"\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun)\b",
-        lowered,
+        lowered_clean,
     )
     if weekday_match:
         return weekday_match.group(1)
@@ -653,7 +659,14 @@ async def _dispatch(
 
     if business.business_type == BusinessType.SERVICES:
         if intent.type in (ai.IntentType.LIST_PRODUCTS, ai.IntentType.LIST_SERVICES):
-            reply = intent.reply_text or await _list_services_text(session, business)
+            requested_name = (intent.entities.get("service_name") or intent.entities.get("product_name") or "").strip()
+            header = None
+            if requested_name:
+                catalog_summary = await _build_catalog_summary(session, business)
+                catalog_names = [item.get("name", "").lower() for item in catalog_summary]
+                if requested_name.lower() not in catalog_names:
+                    header = f"We don't currently offer '{requested_name}', but here's what {business.name} offers:"
+            reply = intent.reply_text or await _list_services_text(session, business, header=header)
             return reply, stage, pending
         if intent.type in (ai.IntentType.BOOK_SERVICE, ai.IntentType.BUY_PRODUCT):
             if pending.get("type") == "reschedule_booking":
@@ -680,10 +693,24 @@ async def _dispatch(
             return await _advance_order(session, business, pending, entities)
 
     if intent.type == ai.IntentType.LIST_SERVICES:
-        reply = await _list_services_text(session, business)
+        requested_name = (intent.entities.get("service_name") or intent.entities.get("product_name") or "").strip()
+        header = None
+        if requested_name:
+            catalog_summary = await _build_catalog_summary(session, business)
+            catalog_names = [item.get("name", "").lower() for item in catalog_summary]
+            if requested_name.lower() not in catalog_names:
+                header = f"We don't currently offer '{requested_name}', but here's what {business.name} offers:"
+        reply = await _list_services_text(session, business, header=header)
         return reply, stage, pending
     if intent.type == ai.IntentType.LIST_PRODUCTS:
-        reply = await _list_products_text(session, business)
+        requested_name = (intent.entities.get("product_name") or intent.entities.get("service_name") or "").strip()
+        header = None
+        if requested_name:
+            catalog_summary = await _build_catalog_summary(session, business)
+            catalog_names = [item.get("name", "").lower() for item in catalog_summary]
+            if requested_name.lower() not in catalog_names:
+                header = f"We don't currently have '{requested_name}' listed, but here's what {business.name} has available:"
+        reply = await _list_products_text(session, business, header=header)
         return reply, stage, pending
     if intent.type == ai.IntentType.CHECK_STATUS:
         status_text = await _check_status_text(session, business, customer)
@@ -717,17 +744,34 @@ async def _dispatch(
         ), stage, pending
 
     if intent.type == ai.IntentType.BOOK_SERVICE:
+        location_prefix = ""
+        lowered_msg = message_text.lower()
+        if any(w in lowered_msg for w in ("location", "located", "where are you", "address")):
+            addr = business.address_text or "our shop"
+            location_prefix = f"We are located at {addr}.\n\n"
+
         if pending.get("type") == "reschedule_booking":
-            return await _advance_reschedule(session, business, pending, intent.entities, message_text=message_text)
-        if pending.get("type") == "booking_time_retry":
-            return await _advance_booking_time_retry(session, business, pending, intent.entities, message_text=message_text)
-        return await _advance_booking(session, business, pending, intent.entities, message_text=message_text, history=history)
+            reply, st, pend = await _advance_reschedule(session, business, pending, intent.entities, message_text=message_text)
+        elif pending.get("type") == "booking_time_retry":
+            reply, st, pend = await _advance_booking_time_retry(session, business, pending, intent.entities, message_text=message_text)
+        else:
+            reply, st, pend = await _advance_booking(session, business, pending, intent.entities, message_text=message_text, history=history)
+        
+        if location_prefix and not reply.startswith(location_prefix):
+            reply = location_prefix + reply
+        return reply, st, pend
 
     if intent.type == ai.IntentType.BUY_PRODUCT:
         return await _advance_order(session, business, pending, intent.entities)
 
     digits_in_msg = "".join(c for c in message_text if c.isdigit())
-    if intent.type == ai.IntentType.CONFIRM_ACTION or (stage == STAGE_CONFIRMING and len(digits_in_msg) >= 9):
+    lowered_msg = message_text.lower()
+    has_cancel_kw = any(w in lowered_msg for w in ("cancel", "stop", "never mind", "nevermind", "don't", "abort"))
+    is_standalone_phone = digits_in_msg == message_text.strip().replace(" ", "").replace("-", "")
+    has_pay_prefix = any(p in lowered_msg for p in ("pay", "use", "number", "m-pesa", "mpesa", "send to"))
+    is_valid_payment_intent = intent.type == ai.IntentType.CONFIRM_ACTION and not has_cancel_kw
+
+    if is_valid_payment_intent or (stage == STAGE_CONFIRMING and len(digits_in_msg) >= 9 and not has_cancel_kw and (is_standalone_phone or has_pay_prefix)):
         if stage == STAGE_CONFIRMING and pending:
             if len(digits_in_msg) >= 9:
                 if not _is_valid_kenyan_phone(digits_in_msg):
