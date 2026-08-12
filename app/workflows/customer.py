@@ -771,8 +771,15 @@ async def _dispatch(
         return await _start_reschedule_booking(session, business, customer)
 
     if intent.type == ai.IntentType.CANCEL_ACTION:
-        if pending.get("type") in ("cancel_booking", "cancel_order"):
-            return "Okay, I won't cancel it after all.", STAGE_IDLE, {}
+        if stage == STAGE_CONFIRMING and pending.get("type") in ("cancel_booking", "cancel_order"):
+            lowered_msg = message_text.lower().strip()
+            negative_words = {"no", "don't", "dont", "keep", "stop", "keep it", "don't cancel"}
+            if any(w in lowered_msg for w in negative_words):
+                return "Okay, I won't cancel it after all.", STAGE_IDLE, {}
+            reply = await _finalize_pending_action(
+                session, business, customer, customer_phone, pending, mpesa_callback_secret
+            )
+            return reply, STAGE_IDLE, {}
         if pending:
             return "No problem, I've cancelled that request - let me know if you'd like to start over.", STAGE_IDLE, {}
         reply = intent.reply_text or "No problem at all! Feel free to reach out whenever you need anything. Have a great day!"

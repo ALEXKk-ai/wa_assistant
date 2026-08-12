@@ -1466,6 +1466,52 @@ async def test_cancel_that_after_confirmation_cancels_database_booking(session, 
     assert "don't have any upcoming" in r5.lower() or "no upcoming" in r5.lower()
 
 
+async def test_cancel_booking_confirmation_yes_vs_no(session, business, monkeypatch):
+    """Verify replying YES cancels the booking while replying NO keeps it active."""
+    business.deposit_percentage = 20.0
+    business.mpesa_shortcode = "174379"
+    await _add_haircut(session, business)
+
+    async def mock_initiate(session, biz, phone, deposit, cb_secret, payment_phone=None):
+        from app.models import Payment, PaymentStatus
+        from decimal import Decimal
+        p = Payment(
+            business_id=biz.id,
+            idempotency_key="idemp_cancel_yesno",
+            checkout_request_id="ws_cancel_yesno",
+            amount=Decimal(str(deposit)),
+            status=PaymentStatus.PENDING,
+        )
+        session.add(p)
+        await session.flush()
+        return p
+
+    monkeypatch.setattr("app.payments.initiate_deposit", mock_initiate)
+
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(type=ai.IntentType.BOOK_SERVICE, entities={"service_name": "Haircut", "date_text": "28 October 2026", "time_text": "11:00"}),
+            ai.Intent(type=ai.IntentType.CONFIRM_ACTION, entities={"payment_phone": "0712345678"}),
+            ai.Intent(type=ai.IntentType.CANCEL_ACTION, entities={}),
+            ai.Intent(type=ai.IntentType.CANCEL_ACTION, entities={}),  # "No don't cancel" -> CANCEL_ACTION with negative words
+        ],
+    )
+
+    phone = "254799003344"
+    await customer_mod.handle_inbound_message(session, business, phone, "I want to book a haircut on 28 Oct at 11am", "cb-secret")
+    await customer_mod.handle_inbound_message(session, business, phone, "0712345678", "cb-secret")
+
+    # Ask to cancel
+    r3 = await customer_mod.handle_inbound_message(session, business, phone, "Actually never mind, cancel that", "cb-secret")
+    assert "Reply YES" in r3
+
+    # Reply negative "No keep it"
+    r4 = await customer_mod.handle_inbound_message(session, business, phone, "No, keep it", "cb-secret")
+    assert "won't cancel it after all" in r4.lower()
+
+
+
 
 
 
