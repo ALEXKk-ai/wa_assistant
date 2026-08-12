@@ -149,6 +149,24 @@ def apply_turn_policy(
         decision.state_policy = StatePolicy.PRESERVE
         return PolicyResult(intent=intent, decision=decision, skip_pre_route=True, reason="confirming input")
 
+    if intent.type == ai.IntentType.RESCHEDULE_BOOKING and pending and pending.get("type") in ("booking", "reschedule_booking", "booking_time_retry"):
+        fixed = _with_extracted_facts(
+            intent,
+            type_=ai.IntentType.BOOK_SERVICE,
+            matched_name=matched_name,
+            business_type=business_type,
+            date_text=date_text_signal,
+            time_text=time_text_signal,
+        )
+        decision.primary_action = PrimaryAction.CHANGE_BOOKING_FIELD
+        decision.state_policy = StatePolicy.UPDATE_PENDING
+        return PolicyResult(
+            intent=fixed,
+            decision=decision,
+            skip_pre_route=True,
+            reason="reschedule intent remapped to draft booking update while pending draft exists",
+        )
+
     if intent.type in (ai.IntentType.BOOK_SERVICE, ai.IntentType.BUY_PRODUCT) and not complaint_signal:
         decision.state_policy = StatePolicy.UPDATE_PENDING
         return PolicyResult(

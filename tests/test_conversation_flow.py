@@ -1559,6 +1559,30 @@ async def test_cancel_booking_bypasses_pre_route_owner_escalation(session, busin
     assert "don't have any upcoming" in reply.lower() or "cancel" in reply.lower()
 
 
+async def test_reschedule_during_pending_draft_updates_draft_date_time(session, business, monkeypatch):
+    """Verify saying 'Can we move it to Friday at 2' while a draft is pending updates the draft instead of checking DB for confirmed bookings."""
+    await _add_haircut(session, business)
+
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(type=ai.IntentType.BOOK_SERVICE, entities={"service_name": "Haircut", "date_text": "Thursday", "time_text": "09:00"}),
+            ai.Intent(type=ai.IntentType.RESCHEDULE_BOOKING, entities={"date_text": "Friday", "time_text": "14:00"}),
+        ],
+    )
+
+    phone = "254799001199"
+    # Turn 1: Create draft for Thursday at 09:00
+    r1 = await customer_mod.handle_inbound_message(session, business, phone, "Book haircut for Thursday at 9am", "cb-secret")
+    assert "09:00" in r1 or "Thursday" in r1
+
+    # Turn 2: Move draft to Friday at 2pm
+    r2 = await customer_mod.handle_inbound_message(session, business, phone, "Can we move it to Friday at 2", "cb-secret")
+    assert "don't have any upcoming" not in r2.lower()
+    assert "Friday" in r2 or "14:00" in r2
+
+
+
 
 
 
