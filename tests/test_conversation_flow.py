@@ -1406,5 +1406,66 @@ async def test_diversion_during_confirming_is_not_forced_into_confirm_action(ses
     assert new_pending["date_text"] == "28 October 2026"
 
 
+async def test_cancel_that_after_confirmation_cancels_database_booking(session, business, monkeypatch):
+    """Verify that saying 'Actually never mind, cancel that' after booking confirmation checks DB for active bookings and cancels the DB row."""
+    business.deposit_percentage = 20.0
+    business.mpesa_shortcode = "174379"
+    await _add_haircut(session, business)
+
+    async def mock_initiate(session, biz, phone, deposit, cb_secret, payment_phone=None):
+        from app.models import Payment, PaymentStatus
+        from decimal import Decimal
+        p = Payment(
+            business_id=biz.id,
+            idempotency_key="idemp_cancel_test",
+            checkout_request_id="ws_cancel_test",
+            amount=Decimal(str(deposit)),
+            status=PaymentStatus.PENDING,
+        )
+        session.add(p)
+        await session.flush()
+        return p
+
+    monkeypatch.setattr("app.payments.initiate_deposit", mock_initiate)
+
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            # 1. Initial booking
+            ai.Intent(type=ai.IntentType.BOOK_SERVICE, entities={"service_name": "Haircut", "date_text": "28 October 2026", "time_text": "11:00"}),
+            # 2. Confirm booking
+            ai.Intent(type=ai.IntentType.CONFIRM_ACTION, entities={"payment_phone": "0712345678"}),
+            # 3. Cancel message right after confirmation
+            ai.Intent(type=ai.IntentType.CANCEL_ACTION, entities={}),
+            # 4. Confirm cancellation with YES
+            ai.Intent(type=ai.IntentType.CONFIRM_ACTION, entities={}),
+            # 5. Check status
+            ai.Intent(type=ai.IntentType.CHECK_STATUS, entities={}),
+        ],
+    )
+
+    phone = "254799001122"
+    # Turn 1: Start booking
+    r1 = await customer_mod.handle_inbound_message(session, business, phone, "I want to book a haircut on 28 Oct at 11am", "cb-secret")
+    assert "Haircut" in r1
+
+    # Turn 2: Provide phone number to confirm
+    r2 = await customer_mod.handle_inbound_message(session, business, phone, "0712345678", "cb-secret")
+    assert "Booked" in r2 or "pending" in r2.lower()
+
+    # Turn 3: Customer says "Actually never mind, cancel that"
+    r3 = await customer_mod.handle_inbound_message(session, business, phone, "Actually never mind, cancel that", "cb-secret")
+    assert "Reply YES" in r3 or "cancel" in r3.lower()
+
+    # Turn 4: Reply YES to confirm cancellation of DB booking
+    r4 = await customer_mod.handle_inbound_message(session, business, phone, "YES", "cb-secret")
+    assert "cancelled" in r4.lower()
+
+    # Turn 5: Check status -> should report no upcoming bookings
+    r5 = await customer_mod.handle_inbound_message(session, business, phone, "What's my booking status?", "cb-secret")
+    assert "don't have any upcoming" in r5.lower() or "no upcoming" in r5.lower()
+
+
+
 
 

@@ -194,7 +194,8 @@ Rules:
 - Questions starting with "are you free", "do you have availability", "is X open" are availability inquiries (ASK_BUSINESS_INFO / ASK_INFO), NOT booking requests (START_BOOKING), unless the customer explicitly states "I want to book", "reserve", or "schedule".
 - For Current Conversation Stage="confirming": submitting a phone number (e.g. "0706832905" or "0706832905 28th") or saying "YES" is ALWAYS CONFIRM_PENDING_ACTION (CONFIRM_ACTION), NOT RESEND_DEPOSIT_PROMPT, ASK_CATALOG, or START_BOOKING.
 - RESEND_DEPOSIT_PROMPT is ONLY for explicit requests to resend/retry an M-Pesa prompt for an ALREADY-SAVED past booking in the database (e.g. "resend payment prompt", "retry STK push"). NEVER use when submitting a phone number for a new draft booking in stage="confirming".
-- OFF_TOPIC_BOUNDARY preserves pending state. CANCEL_PENDING_ACTION requires explicit cancel/stop/nevermind/start over language.
+- For Current Conversation Stage="idle" (nothing currently being collected) when customer says "cancel that", "never mind", or "cancel", classify as START_CANCEL_BOOKING (CANCEL_BOOKING) or START_CANCEL_ORDER (CANCEL_ORDER), NOT CANCEL_PENDING_ACTION.
+- OFF_TOPIC_BOUNDARY preserves pending state. CANCEL_PENDING_ACTION requires explicit cancel/stop/nevermind/start over language while a draft is in progress.
 - ASK_STOCK is for "do you have X", "is X in stock", or restock notification requests. If a restock notification is requested, include NOTIFY_OWNER.
 - ESCALATE_TO_OWNER is only for explicit complaints, refund exceptions, human/manager requests, proposals, or unavailable policy facts.
 - Response wording is NOT your job. Do not invent a customer reply. Only route the turn.

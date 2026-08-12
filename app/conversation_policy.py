@@ -216,6 +216,19 @@ def apply_turn_policy(
             reason="vague correction asks which field",
         )
 
+    if intent.type == ai.IntentType.CANCEL_ACTION and not pending and explicit_cancel:
+        target_intent = ai.IntentType.CANCEL_BOOKING if business_type == BusinessType.SERVICES else ai.IntentType.CANCEL_ORDER
+        target_action = PrimaryAction.START_CANCEL_BOOKING if business_type == BusinessType.SERVICES else PrimaryAction.START_CANCEL_ORDER
+        guarded = _clone_intent(intent, type_=target_intent)
+        decision.primary_action = target_action
+        decision.state_policy = StatePolicy.PRESERVE
+        return PolicyResult(
+            intent=guarded,
+            decision=decision,
+            skip_pre_route=True,
+            reason="idle cancellation intent remapped to database cancellation check",
+        )
+
     # Only explicit draft-cancel language may clear pending state.  Off-topic
     # chatter or vague model uncertainty should preserve the active request.
     if (
