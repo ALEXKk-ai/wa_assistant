@@ -1211,4 +1211,200 @@ async def test_confirming_stage_phone_with_extra_words_and_resend_deposit_fallba
     assert stk_calls[0][1] == "0706832905"
 
 
+async def test_phone_number_during_confirming_is_confirm_action(session, business, monkeypatch):
+    """Test 1: Valid phone number during confirming stage classifies as CONFIRM_ACTION, never RESEND_DEPOSIT."""
+    from app.conversation_turn import ConversationTurnProcessor, TurnContext
+    from app.workflows.customer import STAGE_CONFIRMING
+
+    await _add_haircut(session, business)
+    pending = {
+        "type": "booking",
+        "service_id": 1,
+        "service_name": "Haircut",
+        "date_text": "28 October 2026",
+        "time_text": "11:00",
+        "slot_start_iso": "2026-10-28T11:00:00",
+        "price": 800,
+        "deposit": 160,
+    }
+
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(type=ai.IntentType.CONFIRM_ACTION, entities={"payment_phone": "0712345678"}),
+        ],
+    )
+
+    context = TurnContext(
+        message_text="0712345678",
+        business=business,
+        stage=STAGE_CONFIRMING,
+        pending=pending,
+        catalog=[{"name": "Haircut"}],
+    )
+    processor = ConversationTurnProcessor()
+    processed = await processor.process(context)
+
+    assert processed.intent.type == ai.IntentType.CONFIRM_ACTION
+    assert processed.decision.primary_action == PrimaryAction.CONFIRM_PENDING_ACTION
+    assert processed.intent.type != ai.IntentType.RESEND_DEPOSIT
+    assert processed.decision.primary_action != PrimaryAction.RESEND_DEPOSIT_PROMPT
+
+
+async def test_cancel_word_during_collecting_booking_is_cancel_action(session, business, monkeypatch):
+    """Test 2: 'never mind' during collecting_booking classifies as CANCEL_ACTION, never CANCEL_BOOKING."""
+    from app.conversation_turn import ConversationTurnProcessor, TurnContext
+    from app.workflows.customer import STAGE_COLLECTING_BOOKING
+
+    await _add_haircut(session, business)
+    pending = {"type": "booking", "service_name": "Haircut", "date_text": "Friday", "time_text": None}
+
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(type=ai.IntentType.CANCEL_ACTION, entities={}),
+        ],
+    )
+
+    context = TurnContext(
+        message_text="never mind",
+        business=business,
+        stage=STAGE_COLLECTING_BOOKING,
+        pending=pending,
+        catalog=[{"name": "Haircut"}],
+    )
+    processor = ConversationTurnProcessor()
+    processed = await processor.process(context)
+
+    assert processed.intent.type == ai.IntentType.CANCEL_ACTION
+    assert processed.decision.primary_action == PrimaryAction.CANCEL_PENDING_ACTION
+    assert processed.intent.type != ai.IntentType.CANCEL_BOOKING
+    assert processed.decision.primary_action != PrimaryAction.START_CANCEL_BOOKING
+
+
+async def test_yes_during_incomplete_draft_does_not_confirm_prematurely(session, business, monkeypatch):
+    """Test 3: 'yes' during an incomplete draft (missing date/time) does NOT classify as CONFIRM_ACTION."""
+    from app.conversation_turn import ConversationTurnProcessor, TurnContext
+    from app.workflows.customer import STAGE_COLLECTING_BOOKING
+
+    await _add_haircut(session, business)
+    pending = {"type": "booking", "service_name": "Haircut", "date_text": None, "time_text": None}
+
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(type=ai.IntentType.BOOK_SERVICE, entities={"service_name": "Haircut"}),
+        ],
+    )
+
+    context = TurnContext(
+        message_text="yes sounds good",
+        business=business,
+        stage=STAGE_COLLECTING_BOOKING,
+        pending=pending,
+        catalog=[{"name": "Haircut"}],
+    )
+    processor = ConversationTurnProcessor()
+    processed = await processor.process(context)
+
+    assert processed.intent.type != ai.IntentType.CONFIRM_ACTION
+    assert processed.decision.primary_action != PrimaryAction.CONFIRM_PENDING_ACTION
+    assert processed.intent.type in (ai.IntentType.BOOK_SERVICE, ai.IntentType.ASK_INFO)
+
+
+async def test_genuine_off_topic_never_triggers_owner_escalation(session, business, monkeypatch, sent_messages):
+    """Test 4: Genuine off-topic queries ('write me a Python script') classify as OFF_TOPIC, never OUT_OF_SCOPE, and do not notify owner."""
+    from app.conversation_turn import ConversationTurnProcessor, TurnContext
+    from app.workflows.customer import STAGE_IDLE
+
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(type=ai.IntentType.OFF_TOPIC, entities={}),
+            ai.Intent(type=ai.IntentType.OFF_TOPIC, entities={}),
+        ],
+    )
+
+    context = TurnContext(
+        message_text="write me a Python script",
+        business=business,
+        stage=STAGE_IDLE,
+        pending={},
+        catalog=[{"name": "Haircut"}],
+    )
+    processor = ConversationTurnProcessor()
+    processed = await processor.process(context)
+
+    assert processed.intent.type == ai.IntentType.OFF_TOPIC
+    assert processed.decision.primary_action == PrimaryAction.OFF_TOPIC_BOUNDARY
+    assert processed.intent.type != ai.IntentType.OUT_OF_SCOPE
+    assert processed.decision.primary_action != PrimaryAction.ESCALATE_TO_OWNER
+    assert processed.decision.needs_owner is False
+
+    # Also verify full workflow execution does not send a message to the owner
+    phone = "254700112244"
+    reply = await customer_mod.handle_inbound_message(session, business, phone, "write me a Python script", "cb-secret")
+    owner_msgs = [t for to, t in sent_messages if to == business.owner_whatsapp_number]
+    assert len(owner_msgs) == 0, "Owner should NOT be notified for off-topic questions"
+
+
+async def test_diversion_during_confirming_is_not_forced_into_confirm_action(session, business, monkeypatch):
+    """Test 5: Answering an unrelated question ('do you have parking?') during STAGE_CONFIRMING classifies as ASK_INFO, not CONFIRM_ACTION, preserving stage and pending draft."""
+    from app.conversation_turn import ConversationTurnProcessor, TurnContext
+    from app.workflows.customer import STAGE_CONFIRMING
+
+    await _add_haircut(session, business)
+    pending_copy = {
+        "type": "booking",
+        "service_id": 1,
+        "service_name": "Haircut",
+        "date_text": "28 October 2026",
+        "time_text": "11:00",
+        "slot_start_iso": "2026-10-28T11:00:00",
+        "price": 800,
+        "deposit": 160,
+    }
+
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(type=ai.IntentType.ASK_INFO, entities={}, reply_text="Yes, we have free customer parking."),
+        ],
+    )
+
+    context = TurnContext(
+        message_text="do you have parking?",
+        business=business,
+        stage=STAGE_CONFIRMING,
+        pending=dict(pending_copy),
+        catalog=[{"name": "Haircut"}],
+    )
+    processor = ConversationTurnProcessor()
+    processed = await processor.process(context)
+
+    assert processed.intent.type == ai.IntentType.ASK_INFO
+    assert processed.decision.primary_action == PrimaryAction.ASK_BUSINESS_INFO
+    assert processed.intent.type != ai.IntentType.CONFIRM_ACTION
+    assert processed.decision.primary_action != PrimaryAction.CONFIRM_PENDING_ACTION
+
+    # Test multi-turn workflow behavior
+    phone = "254700554433"
+    reply, new_stage, new_pending = await customer_mod._dispatch(
+        session=session,
+        business=business,
+        customer=None,
+        customer_phone=phone,
+        message_text="do you have parking?",
+        stage=STAGE_CONFIRMING,
+        pending=dict(pending_copy),
+        intent=processed.intent,
+        mpesa_callback_secret="cb-secret",
+    )
+
+    assert new_stage == STAGE_CONFIRMING, "Stage must remain STAGE_CONFIRMING after diversion"
+    assert new_pending["service_name"] == "Haircut"
+    assert new_pending["date_text"] == "28 October 2026"
+
+
+
 

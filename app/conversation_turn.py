@@ -5,7 +5,7 @@ classification, strict decision adaptation, policy validation, and diagnostic
 logging.  Domain actions still live in app.workflows.customer so the proven
 booking/order/payment handlers remain in place.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from app import ai
 from app.conversation_decision import PrimaryAction, StatePolicy
@@ -21,18 +21,20 @@ logger = get_logger(__name__)
 class TurnContext:
     business: Business
     message_text: str
-    stage: str
-    pending: dict
-    history: list[dict]
-    catalog: list[dict]
-    business_hours_text: str
-    business_address: str
-    business_extra_info: str
-    fulfillment_policy: str
-    date_text_signal: str | None
-    time_text_signal: str | None
-    stage_confirming: str
-    active_detail_stages: set[str]
+    stage: str = "idle"
+    pending: dict = field(default_factory=dict)
+    history: list[dict] = field(default_factory=list)
+    catalog: list[dict] = field(default_factory=list)
+    business_hours_text: str = "not set - no restrictions"
+    business_address: str = "not listed"
+    business_extra_info: str = "none"
+    fulfillment_policy: str = "both"
+    date_text_signal: str | None = None
+    time_text_signal: str | None = None
+    stage_confirming: str = "confirming"
+    active_detail_stages: set[str] = field(
+        default_factory=lambda: {"collecting_booking", "collecting_order", "reschedule_booking", "booking_time_retry"}
+    )
 
 
 @dataclass
