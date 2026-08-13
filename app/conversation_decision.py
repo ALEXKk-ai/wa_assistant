@@ -8,7 +8,7 @@ the policy layer can validate before any workflow mutates state.
 from dataclasses import dataclass, field
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app import ai
 
@@ -108,6 +108,28 @@ class TurnDecisionSchema(BaseModel):
     needs_owner: bool = False
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
     reason: str = ""
+
+    @field_validator("secondary_actions", mode="before")
+    @classmethod
+    def clean_secondary_actions(cls, v):
+        if not isinstance(v, list):
+            return []
+        cleaned = []
+        valid_map = {
+            "ASK_BUSINESS_INFO": SecondaryAction.ANSWER_LOCATION,
+            "ASK_CATALOG": SecondaryAction.ANSWER_SERVICE_AVAILABILITY,
+            "ASK_STOCK": SecondaryAction.ANSWER_PRODUCT_AVAILABILITY,
+            "ESCALATE_TO_OWNER": SecondaryAction.NOTIFY_OWNER,
+        }
+        for item in v:
+            if isinstance(item, str):
+                if item in SecondaryAction.__members__:
+                    cleaned.append(item)
+                elif item in valid_map:
+                    cleaned.append(valid_map[item].value)
+            elif isinstance(item, SecondaryAction):
+                cleaned.append(item.value)
+        return cleaned
 
 
 def decision_from_schema(schema: TurnDecisionSchema) -> TurnDecision:
