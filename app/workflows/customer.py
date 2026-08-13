@@ -1004,7 +1004,7 @@ async def _grounded_info_reply(
         catalog=catalog,
         conversation_history=history,
         business_hours_text=hours_mod.format_hours(hours),
-        business_address=business.address_text or "not listed",
+        business_address=business.address_text or "Online service (no physical storefront)",
         business_extra_info=extra_info,
         fulfillment_policy=getattr(business.fulfillment_mode, "value", "both"),
     )

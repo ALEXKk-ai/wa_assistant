@@ -76,11 +76,39 @@ def _normalize_day(raw: str) -> str:
 def format_hours(hours: dict | None) -> str:
     if not hours or all(v is None for v in hours.values()):
         return "Hours not set - no restrictions on booking times."
-    lines = []
+
+    day_schedules = []
     for day in DAYS:
         info = hours.get(day)
-        lines.append(f"{DAY_NAMES[day]}: closed" if info is None else f"{DAY_NAMES[day]}: {info['open']}-{info['close']}")
-    return "; ".join(lines)
+        sched = "Closed" if info is None else f"{info['open']}-{info['close']}"
+        day_schedules.append((DAY_NAMES[day], sched))
+
+    blocks: list[tuple[list[str], str]] = []
+    curr_sched = None
+    curr_days: list[str] = []
+
+    for day_name, sched in day_schedules:
+        if sched == curr_sched:
+            curr_days.append(day_name)
+        else:
+            if curr_days:
+                blocks.append((curr_days, curr_sched))
+            curr_sched = sched
+            curr_days = [day_name]
+    if curr_days:
+        blocks.append((curr_days, curr_sched))
+
+    parts = []
+    for days_list, sched in blocks:
+        if len(days_list) == 1:
+            days_str = days_list[0]
+        elif len(days_list) == 2:
+            days_str = f"{days_list[0]} & {days_list[1]}"
+        else:
+            days_str = f"{days_list[0]} to {days_list[-1]}"
+        parts.append(f"{days_str}: {sched}")
+
+    return " | ".join(parts)
 
 
 def is_within_hours(hours: dict | None, slot_start: datetime, slot_end: datetime) -> tuple[bool, str]:

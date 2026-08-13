@@ -232,6 +232,7 @@ Address & Location: {business_address}
 Extra Info & FAQs: {business_extra_info}
 Catalog: {catalog}
 Operating hours: {business_hours_text}
+Current Live Date: {current_date_text}
 Current Conversation Stage: {stage}
 Currently collecting: {pending_summary}
 Recent conversation:
@@ -366,6 +367,7 @@ async def extract_turn_decision(
     is_mocked_intent = getattr(extract_intent, "__name__", "") != "extract_intent" or extract_intent.__module__ != __name__
     if not is_mocked_intent:
         settings = get_settings()
+        now = datetime.now()
         prompt = _DECISION_SYSTEM_PROMPT.format(
             business_name=business_name,
             business_type=business_type,
@@ -374,6 +376,7 @@ async def extract_turn_decision(
             business_extra_info=business_extra_info or "none",
             catalog=catalog,
             business_hours_text=business_hours_text,
+            current_date_text=now.strftime("%A %d %b %Y"),
             stage=stage,
             pending_summary=_format_pending(pending),
             history_text=_format_history(conversation_history or []),

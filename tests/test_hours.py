@@ -92,9 +92,16 @@ def test_slot_ending_after_closing_rejected():
 def test_format_hours_shows_all_days():
     hours = hours_mod.parse_hours_spec("Mon-Fri 09:00-18:00, Sat 10:00-14:00")
     text = hours_mod.format_hours(hours)
-    assert "Monday: 09:00-18:00" in text
+    assert "Monday to Friday: 09:00-18:00" in text
     assert "Saturday: 10:00-14:00" in text
-    assert "Sunday: closed" in text
+    assert "Sunday: Closed" in text
+
+
+def test_format_hours_groups_mon_to_sat():
+    hours = hours_mod.parse_hours_spec("Mon-Sat 09:00-18:00")
+    text = hours_mod.format_hours(hours)
+    assert "Monday to Saturday: 09:00-18:00" in text
+    assert "Sunday: Closed" in text
 
 
 def test_format_unset_hours():
