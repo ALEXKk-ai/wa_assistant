@@ -24,6 +24,7 @@ crash or silently stall a conversation - every call is wrapped in a
 timeout + bounded retry, and any failure degrades to FALLBACK_INTENT.
 """
 import asyncio
+from datetime import datetime
 import json
 from dataclasses import dataclass, field
 from enum import Enum
