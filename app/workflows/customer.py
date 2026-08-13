@@ -65,8 +65,6 @@ from app.models import (
     PaymentStatus,
     Service,
 )
-from app.repositories import BookingConflictError
-from app.response_generation import ValidatedResponseContract, render_validated_response
 from app.whatsapp import send_business_message
 from app.workflows import owner as owner_workflow
 
@@ -291,17 +289,8 @@ async def handle_inbound_message(
             session, business, customer, customer_phone, message_text, intent, stage, pending, mpesa_callback_secret, history
         )
 
-    # Post-dispatch addendum layer: Enrich reply from secondary_actions AND fallback keyword scanner
+    # Post-dispatch addendum layer: Enrich reply from secondary_actions
     reply_text = _enrich_reply_from_secondary_actions(reply_text, processed.decision.secondary_actions, business)
-    addendum = _secondary_info_addendum(message_text, business)
-    if addendum:
-        # Check line by line to avoid duplicate information
-        new_lines = []
-        for line in addendum.strip().split("\n"):
-            if line and line not in reply_text:
-                new_lines.append(line)
-        if new_lines:
-            reply_text += "\n\n" + "\n".join(new_lines)
 
     history.append({"role": "bot", "text": reply_text})
     history = history[-MAX_HISTORY_ENTRIES:]
@@ -915,8 +904,9 @@ def _fmt_price(amount: float) -> str:
     return f"{amount:,.2f}"
 
 
-async def _list_services_text(session: AsyncSession, business: Business, header: str | None = None) -> str:
-    services = await repo.list_services(session, business.id)
+async def _list_services_text(session: AsyncSession, business: Business, header: str | None = None, services: list[Service] | None = None) -> str:
+    if services is None:
+        services = await repo.list_services(session, business.id)
     if not services:
         return f"{business.name} hasn't listed any services yet - please check back soon."
     intro = header or f"Here's what {business.name} offers:"
@@ -1055,14 +1045,6 @@ def _match_catalog_service(user_input: str, catalog_services: list) -> Service |
     return None
 
 
-def _find_named_item(message_text: str, names: list[str]) -> str | None:
-    lowered = message_text.lower()
-    matches = [name for name in names if name and name.lower() in lowered]
-    if not matches:
-        return None
-    return max(matches, key=len)
-
-
 async def _answer_stock_request(
     session: AsyncSession,
     business: Business,
@@ -1080,11 +1062,10 @@ async def _answer_stock_request(
             "and they'll get back to you soon."
         )
 
-    names = [p.name for p in products]
-    matched_name = _find_named_item(message_text, names)
+    matched_product = _match_catalog_service(message_text, products)
     restock_request = bool(_RESTOCK_NOTIFY_RE.search(message_text))
-    if matched_name:
-        product = next(p for p in products if p.name == matched_name)
+    if matched_product:
+        product = matched_product
         stock_text = (
             f"Yes, {product.name} is in stock at KES {_fmt_price(product.price)}."
             if product.stock_qty > 0
@@ -1162,44 +1143,16 @@ def _enrich_reply_from_secondary_actions(
         elif action == SecondaryAction.ANSWER_PRICE and business.deposit_percentage and business.deposit_percentage > 0:
             if "deposit" not in lowered_reply and "price" not in lowered_reply:
                 addendums.append(f"💰 A {business.deposit_percentage:.0f}% deposit is required for bookings.")
+        elif action == SecondaryAction.ANSWER_PAYMENT_METHODS:
+            if "m-pesa" not in lowered_reply and "payment" not in lowered_reply:
+                if business.mpesa_shortcode:
+                    addendums.append("💳 Yes, we accept M-Pesa payments!")
+                else:
+                    addendums.append("💳 Payment is collected at the shop.")
 
     if addendums:
         return reply_text + "\n\n" + "\n".join(addendums)
     return reply_text
-
-
-def _secondary_info_addendum(message_text: str, business: Business) -> str:
-    """Scan for common secondary questions in a multi-part message and build
-    a brief addendum so the customer doesn't have to ask again."""
-    lowered = message_text.lower()
-    parts: list[str] = []
-
-    # Location / address question
-    if any(w in lowered for w in ("where", "location", "address", "directions", "find", "located")):
-        if business.address_text:
-            parts.append(f"📍 We're located at: {business.address_text}")
-
-    # M-Pesa / payment method question
-    if any(w in lowered for w in ("m-pesa", "mpesa", "payment method", "pay with", "take m-pesa", "accept m-pesa")):
-        if business.mpesa_shortcode:
-            parts.append("💳 Yes, we accept M-Pesa payments!")
-        else:
-            parts.append("💳 Payment is collected at the shop.")
-
-    # Operating hours question (if not already answered in reply)
-    if any(w in lowered for w in ("hour", "hours", "closing time", "opening time", "open on")) and "hours" not in lowered:
-        hours = json.loads(business.hours_json or "{}")
-        if hours:
-            parts.append(f"🕒 Our hours are: {hours_mod.format_hours(hours)}")
-
-    # Deposit question (only if not already covered by the booking confirmation)
-    if any(w in lowered for w in ("deposit", "upfront", "pay first", "pay before")):
-        if business.deposit_percentage and business.deposit_percentage > 0:
-            parts.append(f"💰 A {business.deposit_percentage:.0f}% deposit is required to secure your slot.")
-
-    if not parts:
-        return ""
-    return "\n\n" + "\n".join(parts)
 
 
 def _validate_slot(business: Business, slot_start: datetime, slot_end: datetime) -> str | None:
@@ -1274,7 +1227,7 @@ async def _advance_booking(
     # Do NOT fall back to pending state or conversation history to substitute a different service.
     if explicit_turn_request and not matched_services:
         bad_name = turn_service_names[0]
-        reply = f"We don't offer '{bad_name.title()}' at {business.name}. " + await _list_services_text(session, business, header="Here are the services we offer:")
+        reply = f"We don't offer '{bad_name.title()}' at {business.name}. " + await _list_services_text(session, business, header="Here are the services we offer:", services=services)
         return reply, STAGE_IDLE, {}
 
     raw_service_names = list(turn_service_names)

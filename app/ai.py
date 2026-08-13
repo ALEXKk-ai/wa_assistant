@@ -179,7 +179,7 @@ Return ONLY JSON matching this schema, no markdown:
 
 {{"reasoning": "<Answer these 3 questions: 1) Is the customer trying to DO something (book/order/cancel/change) or KNOW something (hours/prices/services/location)? 2) How many intents are in this message? 3) Which is primary and which are secondary?>",
 "primary_action": "START_BOOKING|CONTINUE_BOOKING|CHANGE_BOOKING_FIELD|CONFIRM_PENDING_ACTION|CANCEL_PENDING_ACTION|START_ORDER|CONTINUE_ORDER|ASK_BUSINESS_INFO|ASK_CATALOG|ASK_STOCK|CHECK_STATUS|START_CANCEL_BOOKING|START_CANCEL_ORDER|START_RESCHEDULE_BOOKING|RESEND_DEPOSIT_PROMPT|ESCALATE_TO_OWNER|OFF_TOPIC_BOUNDARY|ASK_CLARIFICATION|SOCIAL_REPLY|FALLBACK",
-"secondary_actions": ["ANSWER_SERVICE_AVAILABILITY|ANSWER_PRODUCT_AVAILABILITY|ANSWER_PRICE|ANSWER_HOURS|ANSWER_LOCATION|NOTIFY_OWNER|PRESERVE_PENDING_CONTEXT"],
+"secondary_actions": ["ANSWER_SERVICE_AVAILABILITY|ANSWER_PRODUCT_AVAILABILITY|ANSWER_PRICE|ANSWER_HOURS|ANSWER_LOCATION|ANSWER_PAYMENT_METHODS|NOTIFY_OWNER|PRESERVE_PENDING_CONTEXT"],
 "facts": {{"service_name": null, "service_names": [], "product_name": null, "quantity": null, "date_text": null, "time_text": null, "payment_phone": null, "complaint": false, "cancel_signal": false, "off_topic": false}},
 "state_policy": "preserve|update_pending|clear_pending|ask_before_replacing",
 "needs_owner": false,
@@ -188,7 +188,7 @@ Return ONLY JSON matching this schema, no markdown:
 Rules:
 - ALWAYS write the 'reasoning' field FIRST. Answer the 3 diagnostic questions before picking primary_action.
 - Choose exactly one primary_action. Use secondary_actions for safe side effects or response enrichment.
-- secondary_actions MUST ONLY contain: ANSWER_SERVICE_AVAILABILITY, ANSWER_PRODUCT_AVAILABILITY, ANSWER_PRICE, ANSWER_HOURS, ANSWER_LOCATION, NOTIFY_OWNER, PRESERVE_PENDING_CONTEXT. NEVER put PrimaryAction names (such as ESCALATE_TO_OWNER or ASK_CLARIFICATION) in secondary_actions.
+- secondary_actions MUST ONLY contain: ANSWER_SERVICE_AVAILABILITY, ANSWER_PRODUCT_AVAILABILITY, ANSWER_PRICE, ANSWER_HOURS, ANSWER_LOCATION, ANSWER_PAYMENT_METHODS, NOTIFY_OWNER, PRESERVE_PENDING_CONTEXT. NEVER put PrimaryAction names (such as ESCALATE_TO_OWNER or ASK_CLARIFICATION) in secondary_actions.
 - For services, service_name/service_names must be exact names from Catalog. For goods, product_name must be an exact catalog name. If unlisted service is requested, extract date_text/time_text but do NOT substitute catalog names into service_name.
 - Booking/order facts are facts from THIS message only. Extract date_text and time_text exactly as spoken when present. Do not copy date/time/quantity from history unless the customer restates it.
 - If a customer gives service + date/time or a correction to an active booking, prefer START_BOOKING/CONTINUE_BOOKING/CHANGE_BOOKING_FIELD over escalation unless there are actual complaint/owner-authority words.
@@ -427,21 +427,9 @@ async def extract_turn_decision(
             decision = decision_from_schema(TurnDecisionSchema.model_validate_json(_clean_json(raw)))
             return intent_from_decision(decision), decision
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Native turn decision failed; falling back to legacy intent", extra=log_extra(error=str(exc)))
+            logger.warning("Native turn decision failed; using FALLBACK_INTENT", extra=log_extra(error=str(exc)))
 
-    intent = await extract_intent(
-        customer_message=customer_message,
-        business_name=business_name,
-        business_type=business_type,
-        catalog=catalog,
-        conversation_history=conversation_history,
-        pending=pending,
-        business_hours_text=business_hours_text,
-        business_address=business_address,
-        business_extra_info=business_extra_info,
-        fulfillment_policy=fulfillment_policy,
-    )
-    return intent, decision_from_intent(intent)
+    return FALLBACK_INTENT, decision_from_intent(FALLBACK_INTENT)
 
 
 async def _call_llm(system_prompt: str, user_message: str, settings) -> str:
