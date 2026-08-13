@@ -1582,6 +1582,57 @@ async def test_reschedule_during_pending_draft_updates_draft_date_time(session, 
     assert "Friday" in r2 or "14:00" in r2
 
 
+def test_stemmed_catalog_matching_braids_to_braiding():
+    """Verify _stem_word and _match_catalog_service match 'braids' to 'Braiding' service (ratio 1.0 post-stemming)."""
+    class MockService:
+        def __init__(self, name):
+            self.name = name
+
+    services = [MockService("Haircut"), MockService("Braiding"), MockService("Hair Coloring")]
+
+    matched = customer_mod._match_catalog_service("braids", services)
+    assert matched is not None
+    assert matched.name == "Braiding"
+
+    matched_typo = customer_mod._match_catalog_service("manicur", [MockService("Manicure")])
+    assert matched_typo is not None
+    assert matched_typo.name == "Manicure"
+
+
+async def test_multi_intent_location_secondary_action_appends_address(session, business, monkeypatch):
+    """Verify SecondaryAction.ANSWER_LOCATION appends business.address_text to the booking reply."""
+    business.address_text = "Westlands Commercial Center, 2nd Floor"
+    await _add_haircut(session, business)
+
+    _mock_extract_intent(
+        monkeypatch,
+        [
+            ai.Intent(
+                type=ai.IntentType.BOOK_SERVICE,
+                entities={"service_name": "Haircut", "date_text": "tomorrow", "time_text": "11:00"},
+            ),
+        ],
+    )
+
+    # Inject ANSWER_LOCATION in turn decision
+    async def mock_turn_decision(*args, **kwargs):
+        from app.conversation_decision import TurnDecision, PrimaryAction, SecondaryAction, DecisionFacts, StatePolicy
+        return TurnDecision(
+            primary_action=PrimaryAction.START_BOOKING,
+            secondary_actions=[SecondaryAction.ANSWER_LOCATION, SecondaryAction.PRESERVE_PENDING_CONTEXT],
+            facts=DecisionFacts(service_name="Haircut", date_text="tomorrow", time_text="11:00"),
+            state_policy=StatePolicy.UPDATE_PENDING,
+        )
+
+    monkeypatch.setattr("app.conversation_turn.ConversationTurnProcessor.process", mock_turn_decision)
+
+    phone = "254799002288"
+    reply = await customer_mod.handle_inbound_message(session, business, phone, "Where are you located and book haircut tomorrow at 11am", "cb-secret")
+    assert "Haircut" in reply
+    assert "Westlands Commercial Center" in reply
+
+
+
 
 
 

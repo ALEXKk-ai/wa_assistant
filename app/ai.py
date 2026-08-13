@@ -178,7 +178,7 @@ Return ONLY JSON matching this schema, no markdown:
 
 {{"reasoning": "<Answer these 3 questions: 1) Is the customer trying to DO something (book/order/cancel/change) or KNOW something (hours/prices/services/location)? 2) How many intents are in this message? 3) Which is primary and which are secondary?>",
 "primary_action": "START_BOOKING|CONTINUE_BOOKING|CHANGE_BOOKING_FIELD|CONFIRM_PENDING_ACTION|CANCEL_PENDING_ACTION|START_ORDER|CONTINUE_ORDER|ASK_BUSINESS_INFO|ASK_CATALOG|ASK_STOCK|CHECK_STATUS|START_CANCEL_BOOKING|START_CANCEL_ORDER|START_RESCHEDULE_BOOKING|RESEND_DEPOSIT_PROMPT|ESCALATE_TO_OWNER|OFF_TOPIC_BOUNDARY|ASK_CLARIFICATION|SOCIAL_REPLY|FALLBACK",
-"secondary_actions": ["ANSWER_SERVICE_AVAILABILITY|ANSWER_PRODUCT_AVAILABILITY|ANSWER_PRICE|ANSWER_HOURS|NOTIFY_OWNER|PRESERVE_PENDING_CONTEXT"],
+"secondary_actions": ["ANSWER_SERVICE_AVAILABILITY|ANSWER_PRODUCT_AVAILABILITY|ANSWER_PRICE|ANSWER_HOURS|ANSWER_LOCATION|NOTIFY_OWNER|PRESERVE_PENDING_CONTEXT"],
 "facts": {{"service_name": null, "service_names": [], "product_name": null, "quantity": null, "date_text": null, "time_text": null, "payment_phone": null, "complaint": false, "cancel_signal": false, "off_topic": false}},
 "state_policy": "preserve|update_pending|clear_pending|ask_before_replacing",
 "needs_owner": false,
@@ -187,7 +187,7 @@ Return ONLY JSON matching this schema, no markdown:
 Rules:
 - ALWAYS write the 'reasoning' field FIRST. Answer the 3 diagnostic questions before picking primary_action.
 - Choose exactly one primary_action. Use secondary_actions for safe side effects or response enrichment.
-- secondary_actions MUST ONLY contain: ANSWER_SERVICE_AVAILABILITY, ANSWER_PRODUCT_AVAILABILITY, ANSWER_PRICE, ANSWER_HOURS, NOTIFY_OWNER, PRESERVE_PENDING_CONTEXT. NEVER put PrimaryAction names (such as ESCALATE_TO_OWNER or ASK_CLARIFICATION) in secondary_actions.
+- secondary_actions MUST ONLY contain: ANSWER_SERVICE_AVAILABILITY, ANSWER_PRODUCT_AVAILABILITY, ANSWER_PRICE, ANSWER_HOURS, ANSWER_LOCATION, NOTIFY_OWNER, PRESERVE_PENDING_CONTEXT. NEVER put PrimaryAction names (such as ESCALATE_TO_OWNER or ASK_CLARIFICATION) in secondary_actions.
 - For services, service_name/service_names must be exact names from Catalog. For goods, product_name must be an exact catalog name. If unlisted service is requested, extract date_text/time_text but do NOT substitute catalog names into service_name.
 - Booking/order facts are facts from THIS message only. Extract date_text and time_text exactly as spoken when present. Do not copy date/time/quantity from history unless the customer restates it.
 - If a customer gives service + date/time or a correction to an active booking, prefer START_BOOKING/CONTINUE_BOOKING/CHANGE_BOOKING_FIELD over escalation unless there are actual complaint/owner-authority words.
@@ -218,7 +218,7 @@ Customer: "What time do you close on Sunday?" (active Haircut booking in memory)
 {{"reasoning": "1) KNOW - asking about operating hours. 2) Single intent. 3) Primary: hours question.", "primary_action": "ASK_BUSINESS_INFO", "secondary_actions": ["ANSWER_HOURS", "PRESERVE_PENDING_CONTEXT"], "facts": {{"date_text": "Sunday"}}, "state_policy": "preserve", "needs_owner": false, "confidence": 0.95}}
 
 Customer: "Where are you located and I'd like to book a haircut tomorrow"
-{{"reasoning": "1) Both KNOW (location) and DO (booking). 2) Two intents. 3) Primary: booking action. Secondary: location question.", "primary_action": "START_BOOKING", "secondary_actions": ["PRESERVE_PENDING_CONTEXT"], "facts": {{"service_name": "Haircut", "date_text": "tomorrow"}}, "state_policy": "update_pending", "needs_owner": false, "confidence": 0.93}}
+{{"reasoning": "1) Both KNOW (location) and DO (booking). 2) Two intents. 3) Primary: booking action. Secondary: location question.", "primary_action": "START_BOOKING", "secondary_actions": ["ANSWER_LOCATION", "PRESERVE_PENDING_CONTEXT"], "facts": {{"service_name": "Haircut", "date_text": "tomorrow"}}, "state_policy": "update_pending", "needs_owner": false, "confidence": 0.93}}
 
 Customer: "Can I get a discount?"
 {{"reasoning": "1) KNOW - asking about pricing/deals. 2) Single intent. 3) Primary: price inquiry. No dissatisfaction expressed.", "primary_action": "ASK_BUSINESS_INFO", "secondary_actions": ["ANSWER_PRICE"], "facts": {{}}, "state_policy": "preserve", "needs_owner": false, "confidence": 0.90}}

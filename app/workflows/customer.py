@@ -37,6 +37,7 @@ used to be the only "cancel"-shaped intent and its handler wiped the
 entire pending state unconditionally, which would have been confusing if
 reused for cancelling a real, already-existing booking.
 """
+import difflib
 import json
 import re
 import time
@@ -48,6 +49,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import ai, payments
 from app import hours as hours_mod
 from app import repositories as repo
+from app.conversation_decision import SecondaryAction
 from app.conversation_state import normalize_pending_form
 from app.conversation_transitions import describe_transition
 from app.conversation_turn import ConversationTurnProcessor, TurnContext
@@ -61,6 +63,7 @@ from app.models import (
     OrderStatus,
     Payment,
     PaymentStatus,
+    Service,
 )
 from app.repositories import BookingConflictError
 from app.response_generation import ValidatedResponseContract, render_validated_response
@@ -288,7 +291,8 @@ async def handle_inbound_message(
             session, business, customer, customer_phone, message_text, intent, stage, pending, mpesa_callback_secret, history
         )
 
-    # Post-dispatch addendum layer: Scan for secondary questions in multi-part messages
+    # Post-dispatch addendum layer: Enrich reply from secondary_actions AND fallback keyword scanner
+    reply_text = _enrich_reply_from_secondary_actions(reply_text, processed.decision.secondary_actions, business)
     addendum = _secondary_info_addendum(message_text, business)
     if addendum:
         # Check line by line to avoid duplicate information
@@ -1016,6 +1020,41 @@ async def _grounded_info_reply(
     )
 
 
+def _stem_word(word: str) -> str:
+    w = word.lower().strip()
+    for suffix in ("ing", "es", "s", "ed", "er"):
+        if w.endswith(suffix) and len(w) - len(suffix) >= 3:
+            return w[:-len(suffix)]
+    return w
+
+
+def _match_catalog_service(user_input: str, catalog_services: list) -> Service | None:
+    if not user_input or not user_input.strip():
+        return None
+    raw_clean = user_input.strip().lower()
+    norm_input = re.sub(r"[^\w\s]", "", raw_clean).replace(" ", "")
+    stemmed_input = _stem_word(norm_input)
+
+    for service in catalog_services:
+        s_raw = service.name.strip().lower()
+        s_norm = re.sub(r"[^\w\s]", "", s_raw).replace(" ", "")
+        s_stemmed = _stem_word(s_norm)
+
+        # 1. Exact or substring match on raw or normalized strings
+        if raw_clean == s_raw or raw_clean in s_raw or s_raw in raw_clean:
+            return service
+        if norm_input == s_norm or norm_input in s_norm or s_norm in norm_input:
+            return service
+        # 2. Exact or substring match on stemmed root words (e.g. "braids" -> "braid" == "braiding" -> "braid")
+        if stemmed_input == s_stemmed or stemmed_input in s_stemmed or s_stemmed in stemmed_input:
+            return service
+        # 3. High confidence fuzzy ratio match on stemmed roots for typos (e.g. "manicur" -> "Manicure")
+        if difflib.SequenceMatcher(None, stemmed_input, s_stemmed).ratio() >= 0.80:
+            return service
+
+    return None
+
+
 def _find_named_item(message_text: str, names: list[str]) -> str | None:
     lowered = message_text.lower()
     matches = [name for name in names if name and name.lower() in lowered]
@@ -1101,6 +1140,32 @@ def _merge_entities(pending: dict, entities: dict, keys: list[str]) -> dict:
         if value not in (None, "", []):
             merged[key] = value
     return merged
+
+
+def _enrich_reply_from_secondary_actions(
+    reply_text: str,
+    secondary_actions: list[SecondaryAction],
+    business: Business,
+) -> str:
+    addendums = []
+    lowered_reply = reply_text.lower()
+
+    for action in secondary_actions:
+        if action == SecondaryAction.ANSWER_LOCATION and business.address_text:
+            if business.address_text.lower() not in lowered_reply and "located" not in lowered_reply and "address" not in lowered_reply:
+                addendums.append(f"📍 We're located at: {business.address_text}")
+        elif action == SecondaryAction.ANSWER_HOURS and business.hours_json:
+            if "hours" not in lowered_reply and "open" not in lowered_reply:
+                hours = json.loads(business.hours_json or "{}")
+                if hours:
+                    addendums.append(f"🕒 Our hours are: {hours_mod.format_hours(hours)}")
+        elif action == SecondaryAction.ANSWER_PRICE and business.deposit_percentage and business.deposit_percentage > 0:
+            if "deposit" not in lowered_reply and "price" not in lowered_reply:
+                addendums.append(f"💰 A {business.deposit_percentage:.0f}% deposit is required for bookings.")
+
+    if addendums:
+        return reply_text + "\n\n" + "\n".join(addendums)
+    return reply_text
 
 
 def _secondary_info_addendum(message_text: str, business: Business) -> str:
@@ -1201,8 +1266,7 @@ async def _advance_booking(
     for s_name in turn_service_names:
         if not s_name:
             continue
-        name_clean = s_name.strip().lower()
-        match_svc = next((s for s in services if s.name.strip().lower() == name_clean or name_clean in s.name.lower() or s.name.lower() in name_clean), None)
+        match_svc = _match_catalog_service(s_name, services)
         if match_svc and match_svc not in matched_services:
             matched_services.append(match_svc)
 
@@ -1222,8 +1286,7 @@ async def _advance_booking(
     for s_name in raw_service_names:
         if not s_name:
             continue
-        name_clean = s_name.strip().lower()
-        match_svc = next((s for s in services if s.name.strip().lower() == name_clean or name_clean in s.name.lower() or s.name.lower() in name_clean), None)
+        match_svc = _match_catalog_service(s_name, services)
         if match_svc and match_svc not in matched_services:
             matched_services.append(match_svc)
 
@@ -1231,12 +1294,7 @@ async def _advance_booking(
     _non_service_words = {"parking", "wifi", "gift card", "directions", "hours", "price", "location", "address", "discount", "offer"}
     unlisted_names = [
         s_name for s_name in turn_service_names
-        if s_name and s_name.strip().lower() not in _non_service_words and not any(
-            s_name.strip().lower() == catalog_s.name.strip().lower()
-            or s_name.strip().lower() in catalog_s.name.lower()
-            or catalog_s.name.lower() in s_name.strip().lower()
-            for catalog_s in services
-        )
+        if s_name and s_name.strip().lower() not in _non_service_words and _match_catalog_service(s_name, services) is None
     ]
     if unlisted_names:
         pending["unlisted_service_names"] = unlisted_names
