@@ -33,7 +33,7 @@ _COMPLAINT_RE = re.compile(
     re.IGNORECASE,
 )
 _BOOKING_PHRASE_RE = re.compile(
-    r"\b(book|booking|reserve|reservation|schedule|want\s+to\s+come)\b",
+    r"\b(book|booking|reserve|reservation|schedule|need|want\s+to\s+come)\b",
     re.IGNORECASE,
 )
 _ORDER_PHRASE_RE = re.compile(
@@ -274,7 +274,7 @@ def apply_turn_policy(
     # ONLY if explicit booking/buy phrases ("want to book", "reserve", "schedule", "buy") exist.
     # DO NOT hijack ASK_INFO / ASK_BUSINESS_INFO availability queries ("is Tuesday 11am available") into forced booking drafts!
     is_price_or_deposit_question = any(w in lowered for w in ("how much", "price", "cost", "deposit", "fee", "how about"))
-    booking_signal = (catalog_signal or service_fact) and booking_phrase and not is_price_or_deposit_question
+    booking_signal = (catalog_signal or service_fact) and booking_phrase and not explicit_cancel and not is_price_or_deposit_question
     order_signal = (catalog_signal or product_fact) and (buy_phrase or (business_type == BusinessType.GOODS and order_phrase and not stock_only)) and not is_price_or_deposit_question
     can_override_escalation = not complaint_signal and (
         booking_phrase or buy_phrase or intent.type in {ai.IntentType.OUT_OF_SCOPE, ai.IntentType.OFF_TOPIC, ai.IntentType.FALLBACK}
