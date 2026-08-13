@@ -289,7 +289,7 @@ async def extract_intent(
         try:
             groq_key = settings.llm_api_key if (settings.llm_api_key and settings.llm_api_key.startswith("gsk_")) else None
             if groq_key and not is_mocked_llm:
-                client = instructor.patch(AsyncGroq(api_key=groq_key))
+                client = instructor.patch(AsyncGroq(api_key=groq_key), mode=instructor.Mode.MD_JSON)
                 structured = await client.chat.completions.create(
                     model="llama-3.1-8b-instant",
                     response_model=StructuredIntentResponse,
@@ -398,7 +398,7 @@ async def extract_turn_decision(
 
             # Fallback: Groq with llama-3.3-70b-versatile, falling back to llama-3.1-8b-instant if 70b rate limits
             if groq_key and not is_mocked_llm:
-                client = instructor.patch(AsyncGroq(api_key=groq_key))
+                client = instructor.patch(AsyncGroq(api_key=groq_key), mode=instructor.Mode.MD_JSON)
                 try:
                     structured = await client.chat.completions.create(
                         model="llama-3.3-70b-versatile",
