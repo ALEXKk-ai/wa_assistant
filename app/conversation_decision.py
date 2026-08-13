@@ -124,11 +124,11 @@ class TurnDecisionSchema(BaseModel):
         for item in v:
             if isinstance(item, str):
                 if item in SecondaryAction.__members__:
-                    cleaned.append(item)
+                    cleaned.append(SecondaryAction[item])
                 elif item in valid_map:
-                    cleaned.append(valid_map[item].value)
+                    cleaned.append(valid_map[item])
             elif isinstance(item, SecondaryAction):
-                cleaned.append(item.value)
+                cleaned.append(item)
         return cleaned
 
 
