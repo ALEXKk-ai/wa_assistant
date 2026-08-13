@@ -33,7 +33,7 @@ _COMPLAINT_RE = re.compile(
     re.IGNORECASE,
 )
 _BOOKING_PHRASE_RE = re.compile(
-    r"\b(book|booking|appointment|reserve|come|visit|schedule|slot)\b",
+    r"\b(book|booking|reserve|reservation|schedule|want\s+to\s+come)\b",
     re.IGNORECASE,
 )
 _ORDER_PHRASE_RE = re.compile(
