@@ -113,6 +113,9 @@ async def _reconciliation_job() -> None:
         expired = await repo.expire_stale_pending_deposit_bookings(session)
         if expired:
             logger.info("Reconciliation job expired stale pending-deposit bookings", extra=log_extra(count=expired))
+        purged = await engine.purge_old_processed_messages(session)
+        if purged:
+            logger.info("Reconciliation job purged old processed messages", extra=log_extra(count=purged))
 
 
 @asynccontextmanager

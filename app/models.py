@@ -307,3 +307,20 @@ class AuditEvent(Base):
     previous_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
     new_status: Mapped[str] = mapped_column(String(50))
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class ProcessedMessage(Base):
+    """Durable deduplication table for Meta WhatsApp webhook messages.
+
+    Meta occasionally delivers the same webhook 2-3 times.  The engine
+    inserts a row here (INSERT ... ON CONFLICT DO NOTHING) before
+    processing; if rowcount == 0 the message was already handled and is
+    skipped.  Old rows are purged periodically by the reconciliation
+    scheduler so the table stays small.
+    """
+
+    __tablename__ = "processed_messages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    message_id: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())

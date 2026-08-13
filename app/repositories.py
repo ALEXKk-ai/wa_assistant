@@ -126,7 +126,7 @@ async def get_conversation_state(
         select(ConversationState).where(
             ConversationState.business_id == business_id,
             ConversationState.customer_phone == customer_phone,
-        )
+        ).with_for_update()  # Row lock: second concurrent message waits for first to commit
     )
     return result.scalar_one_or_none()
 
@@ -253,7 +253,9 @@ async def get_payment_by_checkout_request_id(
     session: AsyncSession, checkout_request_id: str
 ) -> Payment | None:
     result = await session.execute(
-        select(Payment).where(Payment.checkout_request_id == checkout_request_id)
+        select(Payment).where(
+            Payment.checkout_request_id == checkout_request_id
+        ).with_for_update()  # Row lock: second callback waits, then hits idempotency guard
     )
     return result.scalar_one_or_none()
 

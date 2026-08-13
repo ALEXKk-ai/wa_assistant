@@ -12,7 +12,7 @@ Two webhook entry points, mirroring main.py:
 import json
 import time
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import payments as payments_module
@@ -28,6 +28,7 @@ from app.models import (
     OrderStatus,
     Payment,
     PaymentStatus,
+    ProcessedMessage,
     Product,
 )
 from app.security import normalize_phone_number
@@ -39,18 +40,17 @@ logger = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Webhook message deduplication
+# Webhook message deduplication (two-tier)
 # ---------------------------------------------------------------------------
 # Meta occasionally delivers the same webhook payload 2-3 times (network
 # retries, edge-to-origin replays). Without dedup, a duplicate delivery can
 # create duplicate orders, send duplicate replies, or double-advance
-# conversation state.  We track each Meta message ID in an in-memory dict
-# with a 5-minute TTL and skip any ID we've already processed.
+# conversation state.
 #
-# Why in-memory instead of the DB?  At v1 scale (single process, one or a
-# handful of businesses) an in-memory dict is simpler, faster, and avoids
-# adding a table + migration.  If this ever moves to multi-worker, swap this
-# for a Redis SETNX with TTL.
+# Tier 1 (fast path): in-memory dict with 5-min TTL. Catches rapid-fire
+#   duplicates within the same process without a DB round-trip.
+# Tier 2 (durable): INSERT into processed_messages with ON CONFLICT DO
+#   NOTHING. Survives container restarts, works across multiple workers.
 # ---------------------------------------------------------------------------
 
 _MESSAGE_DEDUP_TTL_SECONDS = 300  # 5 minutes
@@ -88,6 +88,39 @@ class _MessageDedup:
 _message_dedup = _MessageDedup()
 
 
+async def _db_is_duplicate(session: AsyncSession, message_id: str) -> bool:
+    """Insert into processed_messages; return True if already present.
+
+    Uses INSERT ... ON CONFLICT DO NOTHING (Postgres) or INSERT OR IGNORE
+    (SQLite).  If rowcount == 0 the row already existed → duplicate.
+    """
+    from app.config import get_settings
+    url = get_settings().database_url
+    if "postgresql" in url or "postgres" in url:
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        stmt = pg_insert(ProcessedMessage).values(message_id=message_id).on_conflict_do_nothing(index_elements=["message_id"])
+    else:
+        # SQLite fallback for local dev / tests
+        stmt = ProcessedMessage.__table__.insert().prefix_with("OR IGNORE").values(message_id=message_id)
+    result = await session.execute(stmt)
+    await session.flush()
+    return result.rowcount == 0
+
+
+async def purge_old_processed_messages(session: AsyncSession, older_than_hours: int = 48) -> int:
+    """Delete processed_messages rows older than the threshold.
+
+    Called by the reconciliation scheduler to keep the table small.
+    Returns the number of rows deleted.
+    """
+    from datetime import datetime, timedelta, timezone
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=older_than_hours)
+    result = await session.execute(
+        delete(ProcessedMessage).where(ProcessedMessage.created_at < cutoff)
+    )
+    await session.flush()
+    return result.rowcount
+
 async def handle_whatsapp_webhook(
     session: AsyncSession, payload: dict, mpesa_callback_secret: str, timing: dict | None = None
 ) -> None:
@@ -113,13 +146,22 @@ async def handle_whatsapp_webhook(
         logger.warning("Unrecognized WhatsApp webhook payload shape", extra=log_extra(payload=payload))
         return
 
-    # --- Deduplication guard ---
-    if message_id and _message_dedup.is_duplicate(message_id):
-        logger.info(
-            "Duplicate webhook message skipped",
-            extra=log_extra(message_id=message_id, sender=sender_phone),
-        )
-        return
+    # --- Deduplication guard (two-tier) ---
+    if message_id:
+        # Tier 1: fast in-memory check (same process, sub-second retries)
+        if _message_dedup.is_duplicate(message_id):
+            logger.info(
+                "Duplicate webhook message skipped (in-memory)",
+                extra=log_extra(message_id=message_id, sender=sender_phone),
+            )
+            return
+        # Tier 2: durable DB check (survives restarts, multi-worker safe)
+        if await _db_is_duplicate(session, message_id):
+            logger.info(
+                "Duplicate webhook message skipped (database)",
+                extra=log_extra(message_id=message_id, sender=sender_phone),
+            )
+            return
 
     business = await repo.get_business_by_phone_number_id(session, phone_number_id)
     if business is None:
