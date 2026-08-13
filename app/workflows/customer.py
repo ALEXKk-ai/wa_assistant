@@ -292,15 +292,7 @@ async def handle_inbound_message(
         )
 
     # Post-dispatch addendum layer: Enrich reply from secondary_actions AND fallback keyword scanner
-    reply_text = _enrich_reply_from_secondary_actions(reply_text, processed.decision.secondary_actions, business)
-    addendum = _secondary_info_addendum(message_text, business)
-    if addendum:
-        new_lines = []
-        for line in addendum.strip().split("\n"):
-            if line and line not in reply_text:
-                new_lines.append(line)
-        if new_lines:
-            reply_text += "\n\n" + "\n".join(new_lines)
+    reply_text = _enrich_reply_from_secondary_actions(reply_text, processed.decision.secondary_actions, business, message_text=message_text)
 
     history.append({"role": "bot", "text": reply_text})
     history = history[-MAX_HISTORY_ENTRIES:]
@@ -1137,6 +1129,7 @@ def _enrich_reply_from_secondary_actions(
     reply_text: str,
     secondary_actions: list[SecondaryAction],
     business: Business,
+    message_text: str = "",
 ) -> str:
     addendums = []
     lowered_reply = reply_text.lower()
@@ -1159,6 +1152,17 @@ def _enrich_reply_from_secondary_actions(
                     addendums.append("💳 Yes, we accept M-Pesa payments!")
                 else:
                     addendums.append("💳 Payment is collected at the shop.")
+
+    if message_text:
+        fallback_addendum = _secondary_info_addendum(message_text, business).strip()
+        if fallback_addendum:
+            for line in fallback_addendum.split("\n"):
+                clean_line = line.strip()
+                if clean_line and clean_line not in addendums:
+                    # Deduplication check: check key phrase
+                    phrase = clean_line.split(":")[-1].strip().lower() if ":" in clean_line else clean_line.lower()
+                    if phrase not in lowered_reply and "located" not in lowered_reply if "located" in clean_line.lower() else True:
+                        addendums.append(clean_line)
 
     if addendums:
         return reply_text + "\n\n" + "\n".join(addendums)
