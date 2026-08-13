@@ -289,8 +289,16 @@ async def handle_inbound_message(
             session, business, customer, customer_phone, message_text, intent, stage, pending, mpesa_callback_secret, history
         )
 
-    # Post-dispatch addendum layer: Enrich reply from secondary_actions
+    # Post-dispatch addendum layer: Enrich reply from secondary_actions AND fallback keyword scanner
     reply_text = _enrich_reply_from_secondary_actions(reply_text, processed.decision.secondary_actions, business)
+    addendum = _secondary_info_addendum(message_text, business)
+    if addendum:
+        new_lines = []
+        for line in addendum.strip().split("\n"):
+            if line and line not in reply_text:
+                new_lines.append(line)
+        if new_lines:
+            reply_text += "\n\n" + "\n".join(new_lines)
 
     history.append({"role": "bot", "text": reply_text})
     history = history[-MAX_HISTORY_ENTRIES:]
@@ -1153,6 +1161,40 @@ def _enrich_reply_from_secondary_actions(
     if addendums:
         return reply_text + "\n\n" + "\n".join(addendums)
     return reply_text
+
+
+def _secondary_info_addendum(message_text: str, business: Business) -> str:
+    """Scan for common secondary questions in a multi-part message and build
+    a brief addendum so the customer doesn't have to ask again."""
+    lowered = message_text.lower()
+    parts: list[str] = []
+
+    # Location / address question
+    if any(w in lowered for w in ("where", "location", "address", "directions", "find", "located")):
+        if business.address_text:
+            parts.append(f"📍 We're located at: {business.address_text}")
+
+    # M-Pesa / payment method question
+    if any(w in lowered for w in ("m-pesa", "mpesa", "payment method", "pay with", "take m-pesa", "accept m-pesa")):
+        if business.mpesa_shortcode:
+            parts.append("💳 Yes, we accept M-Pesa payments!")
+        else:
+            parts.append("💳 Payment is collected at the shop.")
+
+    # Operating hours question (if not already answered in reply)
+    if any(w in lowered for w in ("hour", "hours", "closing time", "opening time", "open on")) and "hours" not in lowered:
+        hours = json.loads(business.hours_json or "{}")
+        if hours:
+            parts.append(f"🕒 Our hours are: {hours_mod.format_hours(hours)}")
+
+    # Deposit question (only if not already covered by the booking confirmation)
+    if any(w in lowered for w in ("deposit", "upfront", "pay first", "pay before")):
+        if business.deposit_percentage and business.deposit_percentage > 0:
+            parts.append(f"💰 A {business.deposit_percentage:.0f}% deposit is required to secure your slot.")
+
+    if not parts:
+        return ""
+    return "\n\n" + "\n".join(parts)
 
 
 def _validate_slot(business: Business, slot_start: datetime, slot_end: datetime) -> str | None:
