@@ -1159,9 +1159,9 @@ def _enrich_reply_from_secondary_actions(
             for line in fallback_addendum.split("\n"):
                 clean_line = line.strip()
                 if clean_line and clean_line not in addendums:
-                    # Deduplication check: check key phrase
                     phrase = clean_line.split(":")[-1].strip().lower() if ":" in clean_line else clean_line.lower()
-                    if phrase not in lowered_reply and "located" not in lowered_reply if "located" in clean_line.lower() else True:
+                    already_in_reply = phrase in lowered_reply or ("located" in clean_line.lower() and "located" in lowered_reply)
+                    if not already_in_reply:
                         addendums.append(clean_line)
 
     if addendums:
