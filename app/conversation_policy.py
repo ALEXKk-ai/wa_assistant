@@ -269,56 +269,7 @@ def apply_turn_policy(
             skip_pre_route=True,
             reason="blocked non-explicit pending cancellation",
         )
-    # Clear booking/order evidence should beat false escalation labels unless
-    # the message actually contains complaint/owner-authority language or is a price/deposit question.
-    is_price_or_deposit_question = any(w in lowered for w in ("how much", "price", "cost", "deposit", "fee", "how about"))
-    booking_signal = (catalog_signal or service_fact) and (booking_phrase or (has_date_signal and has_time_signal)) and not is_price_or_deposit_question
-    order_signal = (catalog_signal or product_fact) and (buy_phrase or (business_type == BusinessType.GOODS and order_phrase and not stock_only)) and not is_price_or_deposit_question
-    can_override_escalation = not complaint_signal and intent.type in {
-        ai.IntentType.OUT_OF_SCOPE,
-        ai.IntentType.OFF_TOPIC,
-        ai.IntentType.FALLBACK,
-        ai.IntentType.ASK_INFO,
-    }
-    if business_type == BusinessType.SERVICES and booking_signal and can_override_escalation:
-        fixed = _with_extracted_facts(
-            intent,
-            type_=ai.IntentType.BOOK_SERVICE,
-            matched_name=matched_name,
-            business_type=business_type,
-            date_text=date_text_signal,
-            time_text=time_text_signal,
-        )
-        decision.primary_action = PrimaryAction.START_BOOKING
-        decision.secondary_actions.append(SecondaryAction.ANSWER_SERVICE_AVAILABILITY)
-        decision.state_policy = StatePolicy.UPDATE_PENDING
-        decision.needs_owner = False
-        return PolicyResult(
-            intent=fixed,
-            decision=decision,
-            skip_pre_route=True,
-            reason="booking evidence overrode broad classification",
-        )
-
-    if business_type == BusinessType.GOODS and order_signal and can_override_escalation:
-        fixed = _with_extracted_facts(
-            intent,
-            type_=ai.IntentType.BUY_PRODUCT,
-            matched_name=matched_name,
-            business_type=business_type,
-            date_text=date_text_signal,
-            time_text=time_text_signal,
-        )
-        decision.primary_action = PrimaryAction.START_ORDER
-        decision.secondary_actions.append(SecondaryAction.ANSWER_PRODUCT_AVAILABILITY)
-        decision.state_policy = StatePolicy.UPDATE_PENDING
-        decision.needs_owner = False
-        return PolicyResult(
-            intent=fixed,
-            decision=decision,
-            skip_pre_route=True,
-            reason="order evidence overrode broad classification",
-        )
+    # Respect LLM classification for ASK_BUSINESS_INFO / ASK_INFO - do not hijack availability questions into forced booking drafts.
     # should continue that flow instead of being intercepted as unclear or
     # owner-required.  Complaints still escalate, but state is preserved.
     info_or_status_intent = intent.type in {
