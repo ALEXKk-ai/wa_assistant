@@ -65,6 +65,7 @@ from app.models import (
     PaymentStatus,
     Service,
 )
+from app.response_generation import ValidatedResponseContract, render_validated_response
 from app.whatsapp import send_business_message
 from app.workflows import owner as owner_workflow
 
