@@ -274,7 +274,7 @@ def apply_turn_policy(
     # ONLY if explicit booking/buy phrases ("want to book", "reserve", "schedule", "buy") exist.
     # DO NOT hijack ASK_INFO / ASK_BUSINESS_INFO availability queries ("is Tuesday 11am available") into forced booking drafts!
     is_price_or_deposit_question = any(w in lowered for w in ("how much", "price", "cost", "deposit", "fee", "how about"))
-    booking_signal = (catalog_signal or service_fact) and (booking_phrase or (has_date_signal and has_time_signal and any(w in lowered for w in ("want", "like to come", "coming", "can i come")))) and not is_price_or_deposit_question
+    booking_signal = (catalog_signal or service_fact) and booking_phrase and not is_price_or_deposit_question
     order_signal = (catalog_signal or product_fact) and (buy_phrase or (business_type == BusinessType.GOODS and order_phrase and not stock_only)) and not is_price_or_deposit_question
     can_override_escalation = not complaint_signal and intent.type in {
         ai.IntentType.OUT_OF_SCOPE,
