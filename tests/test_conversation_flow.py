@@ -1566,20 +1566,20 @@ async def test_reschedule_during_pending_draft_updates_draft_date_time(session, 
     _mock_extract_intent(
         monkeypatch,
         [
-            ai.Intent(type=ai.IntentType.BOOK_SERVICE, entities={"service_name": "Haircut", "date_text": "Thursday", "time_text": "09:00"}),
-            ai.Intent(type=ai.IntentType.RESCHEDULE_BOOKING, entities={"date_text": "Friday", "time_text": "14:00"}),
+            ai.Intent(type=ai.IntentType.BOOK_SERVICE, entities={"service_name": "Haircut", "date_text": "Friday", "time_text": "14:00"}),
+            ai.Intent(type=ai.IntentType.RESCHEDULE_BOOKING, entities={"date_text": "Saturday", "time_text": "15:00"}),
         ],
     )
 
     phone = "254799001199"
-    # Turn 1: Create draft for Thursday at 09:00
-    r1 = await customer_mod.handle_inbound_message(session, business, phone, "Book haircut for Thursday at 9am", "cb-secret")
-    assert "09:00" in r1 or "Thursday" in r1
+    # Turn 1: Create draft for Friday at 14:00
+    r1 = await customer_mod.handle_inbound_message(session, business, phone, "Book haircut for Friday at 2pm", "cb-secret")
+    assert "14:00" in r1 or "Friday" in r1
 
-    # Turn 2: Move draft to Friday at 2pm
-    r2 = await customer_mod.handle_inbound_message(session, business, phone, "Can we move it to Friday at 2", "cb-secret")
+    # Turn 2: Move draft to Saturday at 3pm
+    r2 = await customer_mod.handle_inbound_message(session, business, phone, "Can we move it to Saturday at 3", "cb-secret")
     assert "don't have any upcoming" not in r2.lower()
-    assert "Friday" in r2 or "14:00" in r2
+    assert "Saturday" in r2 or "15:00" in r2
 
 
 def test_stemmed_catalog_matching_braids_to_braiding():
@@ -1604,25 +1604,18 @@ async def test_multi_intent_location_secondary_action_appends_address(session, b
     business.address_text = "Westlands Commercial Center, 2nd Floor"
     await _add_haircut(session, business)
 
-    _mock_extract_intent(
-        monkeypatch,
-        [
-            ai.Intent(
-                type=ai.IntentType.BOOK_SERVICE,
-                entities={"service_name": "Haircut", "date_text": "tomorrow", "time_text": "11:00"},
-            ),
-        ],
-    )
-
     # Inject ANSWER_LOCATION in turn decision
     async def mock_turn_decision(*args, **kwargs):
         from app.conversation_decision import TurnDecision, PrimaryAction, SecondaryAction, DecisionFacts, StatePolicy
-        return TurnDecision(
+        from app.conversation_turn import ProcessedTurn
+        intent = ai.Intent(type=ai.IntentType.BOOK_SERVICE, entities={"service_name": "Haircut", "date_text": "tomorrow", "time_text": "11:00"})
+        decision = TurnDecision(
             primary_action=PrimaryAction.START_BOOKING,
             secondary_actions=[SecondaryAction.ANSWER_LOCATION, SecondaryAction.PRESERVE_PENDING_CONTEXT],
             facts=DecisionFacts(service_name="Haircut", date_text="tomorrow", time_text="11:00"),
             state_policy=StatePolicy.UPDATE_PENDING,
         )
+        return ProcessedTurn(intent=intent, decision=decision, skip_pre_route=True, policy_reason="test")
 
     monkeypatch.setattr("app.conversation_turn.ConversationTurnProcessor.process", mock_turn_decision)
 
