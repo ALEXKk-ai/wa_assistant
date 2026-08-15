@@ -1567,7 +1567,7 @@ async def test_reschedule_during_pending_draft_updates_draft_date_time(session, 
         monkeypatch,
         [
             ai.Intent(type=ai.IntentType.BOOK_SERVICE, entities={"service_name": "Haircut", "date_text": "Friday", "time_text": "14:00"}),
-            ai.Intent(type=ai.IntentType.RESCHEDULE_BOOKING, entities={"date_text": "Saturday", "time_text": "15:00"}),
+            ai.Intent(type=ai.IntentType.RESCHEDULE_BOOKING, entities={"date_text": "Sunday", "time_text": "15:00"}),
         ],
     )
 
@@ -1576,10 +1576,10 @@ async def test_reschedule_during_pending_draft_updates_draft_date_time(session, 
     r1 = await customer_mod.handle_inbound_message(session, business, phone, "Book haircut for Friday at 2pm", "cb-secret")
     assert "14:00" in r1 or "Friday" in r1
 
-    # Turn 2: Move draft to Saturday at 3pm
-    r2 = await customer_mod.handle_inbound_message(session, business, phone, "Can we move it to Saturday at 3", "cb-secret")
+    # Turn 2: Move draft to Sunday at 3pm
+    r2 = await customer_mod.handle_inbound_message(session, business, phone, "Can we move it to Sunday at 3", "cb-secret")
     assert "don't have any upcoming" not in r2.lower()
-    assert "Saturday" in r2 or "15:00" in r2
+    assert "Sunday" in r2 or "15:00" in r2
 
 
 def test_stemmed_catalog_matching_braids_to_braiding():
