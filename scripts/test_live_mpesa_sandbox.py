@@ -19,7 +19,7 @@ from app.security import encrypt_secret
 
 
 async def main():
-    phone = sys.argv[1] if len(sys.argv) > 1 else "254708374149"
+    phone = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("TEST_CUSTOMER_PHONE", "254700000000")
     amount = float(sys.argv[2]) if len(sys.argv) > 2 else 100.0
 
     print(f"--- Testing Live M-Pesa STK Push ---")
@@ -30,26 +30,32 @@ async def main():
     async with SessionLocal() as session:
         result = await session.execute(select(Business).where(Business.name == "bloom salon"))
         business = result.scalars().first()
+        phone_id = os.environ.get("WHATSAPP_PHONE_NUMBER_ID", "100000000000000")
+        owner_phone = os.environ.get("OWNER_WHATSAPP_NUMBER", "254700000000")
+        consumer_key = os.environ.get("MPESA_CONSUMER_KEY", "placeholder_consumer_key")
+        consumer_secret = os.environ.get("MPESA_CONSUMER_SECRET", "placeholder_consumer_secret")
+        passkey = os.environ.get("MPESA_PASSKEY", "placeholder_passkey")
+
         if not business:
             business = Business(
                 name="bloom salon",
                 business_type=BusinessType.SERVICES,
-                whatsapp_phone_number_id="1263634996831686",
+                whatsapp_phone_number_id=phone_id,
                 whatsapp_token_encrypted=encrypt_secret("dev-token"),
-                owner_whatsapp_number="254103890536",
-                mpesa_shortcode="174379",
-                mpesa_passkey_encrypted=encrypt_secret("bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919"),
-                mpesa_consumer_key_encrypted=encrypt_secret("Z7UdM0bHvqVRV6WlCRT6oLXzgtCMDbsWxLbTUn2drcZlPsWu"),
-                mpesa_consumer_secret_encrypted=encrypt_secret("odG2TYC4nMRrz9LixCDdU07BuLf5nNApoIrmSDeUs32sZUpAFGVom1PJPcAIDK0E"),
+                owner_whatsapp_number=owner_phone,
+                mpesa_shortcode=os.environ.get("MPESA_SHORTCODE", "174379"),
+                mpesa_passkey_encrypted=encrypt_secret(passkey),
+                mpesa_consumer_key_encrypted=encrypt_secret(consumer_key),
+                mpesa_consumer_secret_encrypted=encrypt_secret(consumer_secret),
                 deposit_percentage=20,
                 confirmation_mode=ConfirmationMode.AUTOMATIC,
             )
             session.add(business)
             await session.flush()
         else:
-            business.mpesa_consumer_key_encrypted = encrypt_secret("Z7UdM0bHvqVRV6WlCRT6oLXzgtCMDbsWxLbTUn2drcZlPsWu")
-            business.mpesa_consumer_secret_encrypted = encrypt_secret("odG2TYC4nMRrz9LixCDdU07BuLf5nNApoIrmSDeUs32sZUpAFGVom1PJPcAIDK0E")
-            business.mpesa_passkey_encrypted = encrypt_secret("bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919")
+            business.mpesa_consumer_key_encrypted = encrypt_secret(consumer_key)
+            business.mpesa_consumer_secret_encrypted = encrypt_secret(consumer_secret)
+            business.mpesa_passkey_encrypted = encrypt_secret(passkey)
             await session.flush()
 
         try:

@@ -22,20 +22,21 @@ DEFAULT_URL = "http://localhost:8000/webhook/whatsapp"
 
 
 def make_payload(phone_number: str, message_text: str) -> dict:
+    phone_id = os.environ.get("WHATSAPP_PHONE_NUMBER_ID", "100000000000000")
     return {
         "object": "whatsapp_business_account",
         "entry": [
             {
-                "id": "1263634996831686",
+                "id": phone_id,
                 "changes": [
                     {
-                        "value": "1263634996831686",
+                        "value": phone_id,
                         "field": "messages",
                         "value": {
                             "messaging_product": "whatsapp",
                             "metadata": {
-                                "display_phone_number": "254741562077",
-                                "phone_number_id": "1263634996831686",
+                                "display_phone_number": "254700000000",
+                                "phone_number_id": phone_id,
                             },
                             "contacts": [{"profile": {"name": f"User_{phone_number[-4:]}"}, "wa_id": phone_number}],
                             "messages": [

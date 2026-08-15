@@ -9,7 +9,7 @@ from app.security import encrypt_secret
 
 async def main():
     token = os.environ.get("WHATSAPP_PERMANENT_TOKEN")
-    phone_id = os.environ.get("WHATSAPP_PHONE_NUMBER_ID") or "1263634996831686"
+    phone_id = os.environ.get("WHATSAPP_PHONE_NUMBER_ID") or "100000000000000"
 
     if len(sys.argv) > 1:
         token = sys.argv[1]

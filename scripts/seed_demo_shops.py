@@ -88,7 +88,7 @@ async def seed(run_init: bool = True) -> None:
         else:
             print(f"Goods shop already exists id={existing[GOODS_PHONE_ID].id}")
 
-        META_PROD_PHONE_ID = os.environ.get("WHATSAPP_PHONE_NUMBER_ID", "1263634996831686")
+        META_PROD_PHONE_ID = os.environ.get("WHATSAPP_PHONE_NUMBER_ID", "100000000000000")
         perm_token = os.environ.get("WHATSAPP_PERMANENT_TOKEN", "")
         
         meta_shop = existing.get(META_PROD_PHONE_ID)
@@ -98,11 +98,11 @@ async def seed(run_init: bool = True) -> None:
                 business_type=BusinessType.SERVICES,
                 whatsapp_phone_number_id=META_PROD_PHONE_ID,
                 whatsapp_token_encrypted=encrypt_secret(perm_token) if perm_token else encrypt_secret("placeholder-token"),
-                owner_whatsapp_number=os.environ.get("OWNER_WHATSAPP_NUMBER", "254706832905"),
+                owner_whatsapp_number=os.environ.get("OWNER_WHATSAPP_NUMBER", "254700000000"),
                 mpesa_shortcode=os.environ.get("MPESA_SHORTCODE", "174379"),
-                mpesa_passkey_encrypted=encrypt_secret(os.environ.get("MPESA_PASSKEY", "bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919")),
-                mpesa_consumer_key_encrypted=encrypt_secret(os.environ.get("MPESA_CONSUMER_KEY", "Z7UdM0bHvqVRV6WlCRT6oLXzgtCMDbsWxLbTUn2drcZlPsWu")),
-                mpesa_consumer_secret_encrypted=encrypt_secret(os.environ.get("MPESA_CONSUMER_SECRET", "odG2TYC4nMRrz9LixCDdU07BuLf5nNApoIrmSDeUs32sZUpAFGVom1PJPcAIDK0E")),
+                mpesa_passkey_encrypted=encrypt_secret(os.environ.get("MPESA_PASSKEY", "placeholder_passkey")),
+                mpesa_consumer_key_encrypted=encrypt_secret(os.environ.get("MPESA_CONSUMER_KEY", "placeholder_consumer_key")),
+                mpesa_consumer_secret_encrypted=encrypt_secret(os.environ.get("MPESA_CONSUMER_SECRET", "placeholder_consumer_secret")),
                 deposit_percentage=20,
                 confirmation_mode=ConfirmationMode.AUTOMATIC,
                 hours_json=json.dumps(hours),
@@ -116,10 +116,10 @@ async def seed(run_init: bool = True) -> None:
             if os.environ.get("OWNER_WHATSAPP_NUMBER"):
                 meta_shop.owner_whatsapp_number = os.environ["OWNER_WHATSAPP_NUMBER"]
             elif not meta_shop.owner_whatsapp_number:
-                meta_shop.owner_whatsapp_number = "254706832905"
-            meta_shop.mpesa_consumer_key_encrypted = encrypt_secret(os.environ.get("MPESA_CONSUMER_KEY", "Z7UdM0bHvqVRV6WlCRT6oLXzgtCMDbsWxLbTUn2drcZlPsWu"))
-            meta_shop.mpesa_consumer_secret_encrypted = encrypt_secret(os.environ.get("MPESA_CONSUMER_SECRET", "odG2TYC4nMRrz9LixCDdU07BuLf5nNApoIrmSDeUs32sZUpAFGVom1PJPcAIDK0E"))
-            meta_shop.mpesa_passkey_encrypted = encrypt_secret(os.environ.get("MPESA_PASSKEY", "bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919"))
+                meta_shop.owner_whatsapp_number = "254700000000"
+            meta_shop.mpesa_consumer_key_encrypted = encrypt_secret(os.environ.get("MPESA_CONSUMER_KEY", "placeholder_consumer_key"))
+            meta_shop.mpesa_consumer_secret_encrypted = encrypt_secret(os.environ.get("MPESA_CONSUMER_SECRET", "placeholder_consumer_secret"))
+            meta_shop.mpesa_passkey_encrypted = encrypt_secret(os.environ.get("MPESA_PASSKEY", "placeholder_passkey"))
             if perm_token:
                 meta_shop.whatsapp_token_encrypted = encrypt_secret(perm_token)
             await session.flush()
