@@ -50,7 +50,7 @@ async def seed(run_init: bool = True) -> None:
             await session.flush()
             session.add_all(
                 [
-                    Service(business_id=salon.id, name="Haircut", price=800, duration_minutes=45),
+                    Service(business_id=salon.id, name="Haircut", price=100, duration_minutes=45),
                     Service(business_id=salon.id, name="Manicure", price=600, duration_minutes=30),
                     Service(business_id=salon.id, name="Braiding", price=2500, duration_minutes=120),
                 ]
@@ -130,7 +130,7 @@ async def seed(run_init: bool = True) -> None:
         if not existing_srvs:
             session.add_all(
                 [
-                    Service(business_id=meta_shop.id, name="Haircut", price=1500, duration_minutes=45),
+                    Service(business_id=meta_shop.id, name="Haircut", price=100, duration_minutes=45),
                     Service(business_id=meta_shop.id, name="Hair Coloring", price=4000, duration_minutes=90),
                     Service(business_id=meta_shop.id, name="Braiding", price=2500, duration_minutes=120),
                 ]

@@ -120,6 +120,24 @@ async def add_service(args) -> None:
         print(f"Added service id={service.id} to business_id={args.business_id}")
 
 
+async def update_service(args) -> None:
+    from sqlalchemy import select
+    await init_db()
+    async with get_session() as session:
+        stmt = select(Service).where(Service.business_id == args.business_id, Service.name.ilike(args.name))
+        result = await session.execute(stmt)
+        service = result.scalars().first()
+        if not service:
+            print(f"Service '{args.name}' not found for business_id={args.business_id}")
+            return
+        if args.price is not None:
+            service.price = args.price
+        if args.duration_minutes is not None:
+            service.duration_minutes = args.duration_minutes
+        await session.flush()
+        print(f"Updated service '{service.name}' (id={service.id}) for business_id={args.business_id}: price={service.price}, duration={service.duration_minutes}m")
+
+
 async def add_product(args) -> None:
     async with get_session() as session:
         product = Product(
@@ -228,6 +246,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--price", type=float, required=True)
     p.add_argument("--duration-minutes", type=int, default=60)
     p.set_defaults(func=add_service)
+
+    p = sub.add_parser("update-service")
+    p.add_argument("--business-id", type=int, required=True)
+    p.add_argument("--name", required=True, help="Name of service to update (case-insensitive)")
+    p.add_argument("--price", type=float, default=None, help="New price in KES")
+    p.add_argument("--duration-minutes", type=int, default=None, help="New duration in minutes")
+    p.set_defaults(func=update_service)
 
     p = sub.add_parser("add-product")
     p.add_argument("--business-id", type=int, required=True)
