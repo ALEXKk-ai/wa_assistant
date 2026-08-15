@@ -2299,7 +2299,12 @@ async def _finalize_reschedule_booking(session: AsyncSession, business: Business
         new_start,
         customer_name=booking.customer.name if getattr(booking, "customer", None) else None,
     )
-    return f"Done - your {service.name} is now on {new_start:%d %b %Y at %H:%M} (was {old_start:%d %b %Y at %H:%M})."
+    reply = f"Done - your {service.name} is now on {new_start:%d %b %Y at %H:%M} (was {old_start:%d %b %Y at %H:%M})."
+    if booking.payment_id:
+        payment = await session.get(Payment, booking.payment_id)
+        if payment and payment.status == PaymentStatus.COMPLETED:
+            reply += f" Your paid deposit (KES {float(booking.deposit_amount):.0f}) has been transferred to your new appointment."
+    return reply
 
 
 async def seed_booking_time_retry(
