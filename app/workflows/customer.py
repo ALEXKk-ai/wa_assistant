@@ -2167,7 +2167,10 @@ async def _finalize_cancel_booking(session: AsyncSession, business: Business, cu
         deposit_amount,
         customer_name=booking.customer.name if getattr(booking, "customer", None) else None,
     )
-    return f"Your {service_name} booking on {booking.slot_start:%d %b at %H:%M} has been cancelled."
+    reply = f"Your {service_name} booking on {booking.slot_start:%d %b at %H:%M} has been cancelled."
+    if deposit_amount:
+        reply += f" Regarding your KES {deposit_amount:.0f} deposit, our team has been notified to review it according to our shop policy."
+    return reply
 
 
 async def _finalize_cancel_order(session: AsyncSession, business: Business, customer_phone: str, pending: dict) -> str:
@@ -2207,7 +2210,10 @@ async def _finalize_cancel_order(session: AsyncSession, business: Business, cust
         deposit_amount,
         customer_name=order.customer.name if getattr(order, "customer", None) else None,
     )
-    return f"Your order ({summary}) has been cancelled."
+    reply = f"Your order ({summary}) has been cancelled."
+    if deposit_amount:
+        reply += f" Regarding your KES {deposit_amount:.0f} deposit, our team has been notified to review it according to our shop policy."
+    return reply
 
 
 async def _finalize_reschedule_booking(session: AsyncSession, business: Business, customer_phone: str, pending: dict) -> str:
