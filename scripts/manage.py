@@ -12,7 +12,7 @@ Usage examples:
         --whatsapp-token "EAAG..." \\
         --owner-whatsapp-number 254712345678 \\
         --mpesa-shortcode 174379 \\
-        --mpesa-passkey "bfb279f9aa9bdbcf..." \\
+        --mpesa-passkey "your-daraja-passkey" \\
         --mpesa-consumer-key "xxx" --mpesa-consumer-secret "yyy" \\
         --deposit-percentage 20
 
