@@ -114,7 +114,7 @@ async def purge_old_processed_messages(session: AsyncSession, older_than_hours: 
     Returns the number of rows deleted.
     """
     from datetime import datetime, timedelta, timezone
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=older_than_hours)
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=older_than_hours)
     result = await session.execute(
         delete(ProcessedMessage).where(ProcessedMessage.created_at < cutoff)
     )
