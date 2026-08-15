@@ -40,7 +40,7 @@ async def export_database() -> str:
     sql_statements = [
         f"-- WA Assistant Database Backup",
         f"-- Exported on: {datetime.now().isoformat()}",
-        f"-- Host: dpg-d9o9a80ae00c73b0k170-a.frankfurt-postgres.render.com",
+        f"-- Host: PostgreSQL Database",
         "BEGIN;\n"
     ]
 
